@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+    <meta name="theme-color" content="#0b0e14" />
+    <title>VoxelCraft — bac à sable voxel</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><rect width='16' height='16' fill='%237cb342'/><rect y='6' width='16' height='10' fill='%238b5a2b'/></svg>" />
+    <link rel="stylesheet" href="/src/ui/style.css" />
+  </head>
+  <body>
+    <canvas id="viewport"></canvas>
+
+    <!-- Couche HUD (jeu en cours) -->
+    <div id="hud" class="layer hidden">
+      <div id="crosshair"></div>
+      <div id="debug" class="debug hidden"></div>
+      <div id="toast-stack" class="toast-stack"></div>
+      <div id="hotbar-wrap">
+        <div id="held-item-name" class="held-name"></div>
+        <div id="status-bars">
+          <div id="health" class="bar-row"></div>
+          <div id="hunger" class="bar-row"></div>
+          <div id="breath" class="bar-row"></div>
+        </div>
+        <div id="hotbar"></div>
+      </div>
+      <div id="hit-vignette"></div>
+    </div>
+
+    <!-- Écrans plein cadre (menus, inventaire, etc.) -->
+    <div id="screens" class="layer"></div>
+
+    <div id="loading" class="layer loading">
+      <div class="loading-inner">
+        <div class="logo">VOXELCRAFT</div>
+        <div class="bar"><i id="loading-bar"></i></div>
+        <div id="loading-text">Initialisation du moteur…</div>
+      </div>
+    </div>
+
+    <noscript>
+      <div class="layer" style="display:grid;place-items:center;background:#0b0e14;color:#fff">
+        Ce jeu nécessite JavaScript.
+      </div>
+    </noscript>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
