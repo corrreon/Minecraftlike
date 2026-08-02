@@ -48,6 +48,19 @@ const WAVE_LIQUID = 2;
 const WAVE_CROSS = 3;
 const BIT_FLUID_TOP = 1 << 21;
 
+/**
+ * Bits 9-10, 22 et 23 sont réinterprétés selon la nature de la face.
+ *
+ * - fluide  : bits 9-10 et 22 = profondeur de la colonne d'eau (0-7), bit 23 =
+ *   contact avec la terre ferme. L'occlusion ambiante n'a aucun sens sur de
+ *   l'eau, ses deux bits sont donc recyclés.
+ * - solide  : bit 22 = la face donne sur de l'eau, pour y projeter des
+ *   caustiques.
+ */
+const BIT_SHORE = 1 << 23;
+const BIT_SUBMERGED = 1 << 22;
+const MAX_WATER_DEPTH = 7;
+
 class LayerBuilder {
   pos: Float32Array;
   nrm: Int8Array;
@@ -153,6 +166,7 @@ const maskBlk = [new Int32Array(MASK_SIZE), new Int32Array(MASK_SIZE)];
 const maskShape = [new Int32Array(MASK_SIZE), new Int32Array(MASK_SIZE)];
 const maskLayer = [new Int32Array(MASK_SIZE), new Int32Array(MASK_SIZE)];
 const maskWave = [new Int32Array(MASK_SIZE), new Int32Array(MASK_SIZE)];
+const maskExtra = [new Int32Array(MASK_SIZE), new Int32Array(MASK_SIZE)];
 
 const quadPos = new Float32Array(12);
 const quadUv = new Float32Array(8);
@@ -268,6 +282,24 @@ export function meshChunk(blocks: Uint8Array, light: Uint8Array): MeshResult {
       let shape = 0;
       if (isLiquid && getBlock(x, y + 1, z) !== blockId) shape = 1; // surface d'un fluide
       maskShape[side][m] = shape;
+
+      // Informations de fluide, résolues ici une bonne fois : la profondeur
+      // sous la face et le contact avec la rive.
+      let extra = 0;
+      if (isLiquid) {
+        let depth = 0;
+        while (depth < MAX_WATER_DEPTH && getBlock(x, y - depth - 1, z) === blockId) depth++;
+        extra |= (depth & 3) << 9;
+        extra |= ((depth >> 2) & 1) << 22;
+        for (const [ox, oz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+          const nb = getBlock(x + ox, y, z + oz);
+          if (nb !== 0 && nb !== blockId && RENDER_KIND[nb] !== RenderKind.Liquid) {
+            extra |= BIT_SHORE;
+            break;
+          }
+        }
+      }
+      maskExtra[side][m] = extra;
       // Seuls les feuillages (repérés par leur teinte) ondulent ; le verre non.
       maskWave[side][m] = isLiquid
         ? WAVE_LIQUID
@@ -277,6 +309,9 @@ export function meshChunk(blocks: Uint8Array, light: Uint8Array): MeshResult {
 
       // Voxel voisin par lequel arrive la lumière.
       const nx = x + q[0] * dir, ny = y + q[1] * dir, nz = z + q[2] * dir;
+      if (!isLiquid && RENDER_KIND[getBlock(nx, ny, nz)] === RenderKind.Liquid) {
+        maskExtra[side][m] |= BIT_SUBMERGED;
+      }
       let ao = 0, sky = 0, blk = 0;
       for (let c = 0; c < 4; c++) {
         // Coins dans l'ordre (-u,-v), (+u,-v), (+u,+v), (-u,+v).
@@ -324,7 +359,8 @@ export function meshChunk(blocks: Uint8Array, light: Uint8Array): MeshResult {
         maskBlk[side][b] === maskBlk[side][a] &&
         maskShape[side][b] === maskShape[side][a] &&
         maskLayer[side][b] === maskLayer[side][a] &&
-        maskWave[side][b] === maskWave[side][a]
+        maskWave[side][b] === maskWave[side][a] &&
+        maskExtra[side][b] === maskExtra[side][a]
       );
     }
 
@@ -366,13 +402,17 @@ export function meshChunk(blocks: Uint8Array, light: Uint8Array): MeshResult {
       const blk = maskBlk[side][m];
       const wave = maskWave[side][m];
 
+      const extra = maskExtra[side][m];
+      const isLiquid = wave === WAVE_LIQUID;
       const packed = (c: number) =>
         tex |
-        (((ao >> (c * 2)) & 3) << 9) |
+        // Sur un fluide, les bits d'occlusion portent la profondeur.
+        (isLiquid ? extra & (3 << 9) : ((ao >> (c * 2)) & 3) << 9) |
         (((sky >> (c * 4)) & 15) << 11) |
         (((blk >> (c * 4)) & 15) << 15) |
         (wave << 19) |
-        (loweredMask & (1 << c) ? BIT_FLUID_TOP : 0);
+        (loweredMask & (1 << c) ? BIT_FLUID_TOP : 0) |
+        (extra & (BIT_SUBMERGED | BIT_SHORE));
 
       const a0 = (ao >> 0) & 3, a1 = (ao >> 2) & 3, a2 = (ao >> 4) & 3, a3 = (ao >> 6) & 3;
       const flip = a0 + a2 > a1 + a3;

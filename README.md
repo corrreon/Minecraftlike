@@ -45,14 +45,23 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 
 - **Greedy meshing** dans des workers, avec **occlusion ambiante par sommet** et
   **éclairage lissé** ; les attributs sont compactés dans un seul flottant
-  (index de texture, AO, lumière du ciel, lumière de bloc, mode d'animation).
+  (index de texture, AO, lumière du ciel, lumière de bloc, mode d'animation,
+  profondeur d'eau).
+- **Ombres portées du soleil** : carte d'ombre orthographique suivant le joueur,
+  centre aligné sur la grille de texels, PCF 3×3, biais dépendant de
+  l'inclinaison, feuillages alpha-testés dans la passe de profondeur, intensité
+  fondue au crépuscule.
 - **Propagation de lumière** incrémentale, budgétée par image : lumière du ciel
   en colonne puis diffusion, lumière de bloc (torches, lave, pierre lumineuse),
   avec algorithmes d'ajout **et** de retrait corrects lorsqu'on casse ou pose.
-- **Atlas procédural** : chaque tuile 16×16 est peinte au démarrage dans un
-  `DataArrayTexture` (bruit fractal bouclable, motifs cellulaires, briques,
-  cernes de bois, silhouettes de plantes), ce qui supprime tout saignement
-  d'atlas et donne des mipmaps propres.
+- **Atlas procédural** : chaque tuile 32×32 est peinte au démarrage dans un
+  `DataArrayTexture` (fissures en marche aléatoire, motifs cellulaires, briques,
+  cernes et nœuds du bois, strates, trame tissée, silhouettes de plantes), ce
+  qui supprime tout saignement d'atlas et donne des mipmaps propres.
+- **Relief par pixel** : chaque peintre produit un champ de hauteur d'où l'on
+  dérive une carte de normales tangentes, plus une rugosité par matériau. Le
+  repère tangent est reconstruit depuis les dérivées d'écran, et un spéculaire
+  solaire distingue les métaux et la glace de la laine et de la terre.
 - **Ciel volumétrique** : dégradé atmosphérique, halo de diffusion solaire,
   disque solaire, lune avec phase, champ d'étoiles scintillantes et couche
   nuageuse projetée en perspective à altitude constante.
@@ -60,8 +69,12 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   lumières, flou gaussien séparable sur trois échelles, **bloom**, **rayons
   crépusculaires** échantillonnés radialement, effet **sous-marin** (ondulation
   et teinte), vignette, étalonnage, tonemap **ACES** et **FXAA**.
-- **Eau** : surface abaissée et animée, normales ondulées, spéculaire solaire,
-  Fresnel, transparence triée.
+- **Eau** : surface abaissée et animée, normales ondulées, scintillement à deux
+  lobes, Fresnel, transparence triée. La **profondeur de la colonne d'eau est
+  calculée par le mailleur**, ce qui donne l'absorption (turquoise sur les
+  hauts-fonds, bleu profond au large) sans passe de profondeur supplémentaire,
+  ainsi que l'**écume** sur les rives et les **caustiques** animées projetées
+  sur les fonds immergés.
 - Feuillages et herbes qui **ondulent au vent** (amplifié par la pluie),
   brouillard atmosphérique teinté par le biome, particules de blocs cassés,
   gerbes d'eau, étincelles d'explosion, pluie et neige.
@@ -162,6 +175,8 @@ Quelques points de conception :
 
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
-- Pas d'ombres portées en temps réel : le relief est rendu par l'éclairage
-  voxel, l'occlusion ambiante et l'ombrage par orientation de face.
 - Les fluides ne s'écoulent pas ; l'eau et la lave sont statiques.
+- Une seule cascade d'ombre : au-delà du rayon couvert (48 à 110 blocs selon la
+  distance de rendu), les ombres s'estompent au lieu de se prolonger.
+- La lumière de bloc est monochrome : une torche et une lanterne aquatique
+  éclairent de la même teinte.

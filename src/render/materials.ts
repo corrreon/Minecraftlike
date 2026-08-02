@@ -32,6 +32,7 @@ out float vAO;
 out float vFogDepth;
 flat out int vLayer;
 flat out int vWave;
+flat out int vExtra;
 
 // Les teintes sont stockées en sRGB (octets) : il faut les linéariser, sinon
 // tout le rendu paraît délavé.
@@ -40,14 +41,21 @@ vec3 srgbToLinear(vec3 c) {
 }
 
 void main() {
-  int d = int(vdata + 0.5);
+  int d = int(vdata);
   vLayer = d & 511;
-  float ao = float((d >> 9) & 3);
-  vLight = vec2(float((d >> 11) & 15), float((d >> 15) & 15)) / 15.0;
   vWave = (d >> 19) & 3;
+  // L'occlusion ambiante n'existe pas sur les fluides : ces bits y portent la
+  // profondeur de la colonne d'eau.
+  float ao = vWave == 2 ? 3.0 : float((d >> 9) & 3);
+  vLight = vec2(float((d >> 11) & 15), float((d >> 15) & 15)) / 15.0;
   bool fluidTop = ((d >> 21) & 1) == 1;
 
   vAO = mix(0.42, 1.0, ao / 3.0);
+  // Fluide : profondeur (3 bits) + contact avec la rive.
+  // Solide : la face donne-t-elle sur de l'eau (caustiques) ?
+  vExtra = vWave == 2
+    ? (((d >> 9) & 3) | (((d >> 22) & 1) << 2)) | (((d >> 23) & 1) << 3)
+    : (((d >> 22) & 1) << 4);
   vTint = srgbToLinear(tint);
   vUv = uv;
 
@@ -118,7 +126,31 @@ in float vAO;
 in float vFogDepth;
 flat in int vLayer;
 flat in int vWave;
+flat in int vExtra;
 layout(location = 0) out vec4 fragColor;
+
+float hash21(vec2 p) {
+  p = fract(p * vec2(123.34, 456.21));
+  p += dot(p, p + 45.32);
+  return fract(p.x * p.y);
+}
+
+float valueNoise(vec2 p) {
+  vec2 i = floor(p);
+  vec2 f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(hash21(i), hash21(i + vec2(1.0, 0.0)), f.x),
+             mix(hash21(i + vec2(0.0, 1.0)), hash21(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+
+/** Réseau de caustiques : interférence de quatre ondes, écrêtée. */
+float caustics(vec2 p, float t) {
+  vec2 q = p * 0.85;
+  float a = sin(q.x + t) + sin(q.y * 1.13 - t * 0.8);
+  float b = sin((q.x + q.y) * 0.71 + t * 1.3) + sin((q.x - q.y) * 0.83 - t);
+  float v = (a + b) * 0.25;
+  return pow(max(v, 0.0), 4.0);
+}
 
 /**
  * Fraction de lumière solaire atteignant le fragment.
@@ -225,6 +257,14 @@ void main() {
 
   vec3 color = albedo * lighting;
 
+  // --- Caustiques sur les fonds immergés ----------------------------------
+  #ifndef WATER
+    if (((vExtra >> 4) & 1) == 1) {
+      float c = caustics(vWorld.xz + vec2(0.0, vWorld.y * 0.3), uTime * 0.9);
+      color += uSunColor * c * 0.55 * sky * uDayFactor * shadow;
+    }
+  #endif
+
   // --- Spéculaire du soleil ----------------------------------------------
   #ifndef WATER
     if (uDayFactor > 0.01 && shadow > 0.01) {
@@ -241,6 +281,13 @@ void main() {
   // --- Reflets et transparence des fluides -------------------------------
   float alpha = texel.a;
   #ifdef WATER
+    // Absorption : l'eau peu profonde tire vers le turquoise, l'eau profonde
+    // vers le bleu sombre, et devient de plus en plus opaque.
+    float depth01 = float(vExtra & 7) / 7.0;
+    vec3 absorb = mix(vec3(1.10, 1.32, 1.34), vec3(0.26, 0.44, 0.86), depth01);
+    color *= absorb;
+    alpha = mix(0.58, 0.95, depth01);
+
     vec3 V = normalize(uCameraPos - vWorld);
     // Ondulation de la normale par deux vagues croisées.
     float r1 = sin(vWorld.x * 2.3 + uTime * 1.9) * 0.5 + sin(vWorld.z * 1.7 - uTime * 1.4) * 0.5;
@@ -256,6 +303,17 @@ void main() {
     color += uSunColor * spec * 1.6 * sky;
     color = mix(color, uFogSky * (0.35 + 0.65 * uDayFactor), fres * 0.45 * sky);
     alpha = mix(alpha, 1.0, fres * 0.5);
+
+    // Écume au contact de la rive, uniquement en surface.
+    if (((vExtra >> 3) & 1) == 1 && n.y > 0.5) {
+      vec2 fp = vWorld.xz * 1.6;
+      float f = valueNoise(fp + vec2(uTime * 0.35, uTime * 0.22))
+              + valueNoise(fp * 2.3 - vec2(uTime * 0.5, 0.0)) * 0.5;
+      float foam = smoothstep(0.72, 1.05, f);
+      color = mix(color, vec3(0.88, 0.95, 1.0) * (0.35 + 0.65 * uDayFactor), foam * 0.7);
+      alpha = mix(alpha, 0.96, foam * 0.8);
+    }
+
     if (uUnderwater == 1) alpha *= 0.35;
   #endif
 
@@ -344,7 +402,7 @@ out vec2 vUv;
 flat out int vLayer;
 
 void main() {
-  int d = int(vdata + 0.5);
+  int d = int(vdata);
   vLayer = d & 511;
   int wave = (d >> 19) & 3;
   bool fluidTop = ((d >> 21) & 1) == 1;
