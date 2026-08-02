@@ -12,6 +12,9 @@ out vec3 vTint;
 out vec3 vNormal;
 out vec3 vWorld;
 out float vFogDepth;
+out vec4 vShadowCoord;
+uniform mat4 uShadowMatrix;
+uniform float uShadowStrength;
 vec3 srgbToLinear(vec3 c) {
   return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(vec3(0.04045), c));
 }
@@ -20,6 +23,9 @@ void main() {
   vec4 world = modelMatrix * vec4(position, 1.0);
   vWorld = world.xyz;
   vNormal = normalize(mat3(modelMatrix) * normal);
+  vShadowCoord = uShadowStrength > 0.0
+    ? uShadowMatrix * vec4(world.xyz + vNormal * 0.04, 1.0)
+    : vec4(0.0);
   vec4 mv = viewMatrix * world;
   vFogDepth = -mv.z;
   gl_Position = projectionMatrix * mv;
@@ -38,18 +44,39 @@ uniform float uDayFactor;
 uniform int uUnderwater;
 uniform float uFlash;
 uniform float uOpacity;
+uniform sampler2D uShadowMap;
+uniform float uShadowStrength;
+uniform float uShadowTexel;
 
 in vec3 vTint;
 in vec3 vNormal;
 in vec3 vWorld;
 in float vFogDepth;
+in vec4 vShadowCoord;
 layout(location = 0) out vec4 fragColor;
+
+float sunVisibility() {
+  if (uShadowStrength <= 0.0) return 1.0;
+  vec3 proj = vShadowCoord.xyz / vShadowCoord.w;
+  if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+  float sum = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      float depth = texture(uShadowMap, proj.xy + vec2(float(x), float(y)) * uShadowTexel).r;
+      sum += proj.z - 0.0016 > depth ? 0.0 : 1.0;
+    }
+  }
+  vec2 edge = abs(proj.xy - 0.5) * 2.0;
+  float fade = 1.0 - smoothstep(0.82, 1.0, max(edge.x, edge.y));
+  return mix(1.0, sum / 9.0, fade * uShadowStrength);
+}
 
 void main() {
   vec3 n = normalize(vNormal);
   float shade = 0.55 + 0.45 * max(n.y, 0.0) + 0.18 * abs(n.x) + 0.1 * abs(n.z);
-  shade *= 0.92 + 0.18 * max(dot(n, uSunDir), 0.0) * uDayFactor;
-  vec3 color = vTint * uLight * shade;
+  float shadow = sunVisibility();
+  shade *= 0.92 + 0.18 * max(dot(n, uSunDir), 0.0) * uDayFactor * shadow;
+  vec3 color = vTint * uLight * shade * mix(0.55, 1.0, shadow);
   color = mix(color, vec3(1.0, 0.35, 0.3), uFlash);
 
   vec3 viewDir = normalize(vWorld - uCameraPos);
@@ -77,6 +104,10 @@ export function createEntityMaterial(env: EnvUniforms): ShaderMaterial {
       uUnderwater: env.uUnderwater,
       uFlash: { value: 0 },
       uOpacity: { value: 1 },
+      uShadowMap: env.uShadowMap,
+      uShadowMatrix: env.uShadowMatrix,
+      uShadowStrength: env.uShadowStrength,
+      uShadowTexel: env.uShadowTexel,
     },
     vertexShader: VERT,
     fragmentShader: FRAG,

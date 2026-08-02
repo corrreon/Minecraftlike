@@ -234,6 +234,9 @@ export class Screens {
     this.toggle(p, 'Oscillation de la caméra', st.viewBobbing, (v) => { st.viewBobbing = v; });
 
     el('h2', undefined, p).textContent = 'Effets';
+    this.toggle(p, 'Ombres portées', st.shadows, (v) => { st.shadows = v; });
+    this.slider(p, 'Qualité des ombres', st.shadowResolution, 1024, 4096, 1024,
+      (v) => { st.shadowResolution = v; }, (v) => `${v} px`);
     this.toggle(p, 'Bloom', st.bloom, (v) => { st.bloom = v; });
     this.toggle(p, 'Rayons crépusculaires', st.godRays, (v) => { st.godRays = v; });
     this.toggle(p, 'Anticrénelage (FXAA)', st.fxaa, (v) => { st.fxaa = v; });

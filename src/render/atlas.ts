@@ -535,7 +535,8 @@ export function buildAtlas(): Atlas {
   texture.wrapS = RepeatWrapping;
   texture.wrapT = RepeatWrapping;
   texture.generateMipmaps = true;
-  texture.anisotropy = 4;
+  // Filtrage anisotrope maximal : les sols vus en rasant restent nets.
+  texture.anisotropy = 16;
   texture.needsUpdate = true;
 
   const averages = previews.map((d) => {

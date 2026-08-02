@@ -5,6 +5,9 @@ export interface Settings {
   fov: number;
   sensitivity: number;
   invertY: boolean;
+  shadows: boolean;
+  /** Résolution de la carte d'ombre (1024 / 2048 / 4096). */
+  shadowResolution: number;
   bloom: boolean;
   godRays: boolean;
   fxaa: boolean;
@@ -31,6 +34,8 @@ export const DEFAULT_SETTINGS: Settings = {
   fov: 75,
   sensitivity: 1,
   invertY: false,
+  shadows: true,
+  shadowResolution: 2048,
   bloom: true,
   godRays: true,
   fxaa: true,

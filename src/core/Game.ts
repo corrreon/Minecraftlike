@@ -19,6 +19,7 @@ import {
   Vector2,
   Vector3,
   WebGLRenderer,
+  type Material,
 } from 'three';
 import {
   CHUNK_X,
@@ -45,10 +46,11 @@ import { buildAtlas, type Atlas } from '../render/atlas';
 import { ChunkManager } from '../render/ChunkManager';
 import { createEnvUniforms, type EnvUniforms } from '../render/env';
 import { createEntityMaterial } from '../render/entityMaterial';
-import { createTerrainMaterial } from '../render/materials';
+import { createShadowMaterial, createTerrainMaterial } from '../render/materials';
 import { ParticleSystem, Weather } from '../render/Particles';
 import { PostFX, projectSun } from '../render/PostFX';
 import { Sky, computeSkyState, createSkyState } from '../render/Sky';
+import { ShadowMap } from '../render/ShadowMap';
 import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type PlayerSave, type WorldMeta } from '../save/SaveManager';
 import { BLOCKS, IS_SOLID, RenderKind, block as blockDef } from '../world/blocks';
 import { biomeDef } from '../world/biomes';
@@ -78,6 +80,8 @@ export class Game {
   private atlas!: Atlas;
   private sky!: Sky;
   private post!: PostFX;
+  private shadows!: ShadowMap;
+  private shadowMaterial: Material | null = null;
   private skyState = createSkyState();
 
   private settings: Settings = loadSettings();
@@ -245,6 +249,7 @@ export class Game {
 
     this.sky = new Sky(this.env);
     this.scene.add(this.sky.mesh);
+    this.shadows = new ShadowMap(this.settings.shadowResolution, 80);
     this.post = new PostFX(this.renderer, this.env);
     this.scene.add(this.weather.points);
 
@@ -299,6 +304,7 @@ export class Game {
       cutout: createTerrainMaterial('cutout', this.atlas.texture, this.env),
       water: createTerrainMaterial('water', this.atlas.texture, this.env),
     };
+    this.shadowMaterial = createShadowMaterial(this.atlas.texture, this.env);
     this.chunks = new ChunkManager(this.world, this.pool, materials, this.save);
     this.chunks.renderDistance = this.settings.renderDistance;
     this.scene.add(this.chunks.group);
@@ -393,6 +399,7 @@ export class Game {
     this.audio.applyVolumes();
     this.hud.setGuiScale(s.guiScale);
     this.player.autoJump = s.autoJump;
+    if (this.shadows) this.shadows.setSize(s.shadowResolution);
     if (this.post) {
       this.post.quality.bloom = s.bloom;
       this.post.quality.godRays = s.godRays;
@@ -1506,9 +1513,65 @@ export class Game {
 
   // --- Rendu --------------------------------------------------------------
 
+  /**
+   * Rend la profondeur de la scène vue du soleil. Le ciel, les particules, la
+   * météo et l'objet tenu en main sont exclus : ils ne projettent pas d'ombre.
+   */
+  private renderShadowPass(): void {
+    const strength = this.shadowStrength();
+    this.env.uShadowStrength.value = strength;
+    if (strength <= 0 || !this.shadowMaterial) {
+      this.env.uShadowMap.value = null;
+      return;
+    }
+
+    const radius = Math.min(110, Math.max(48, this.settings.renderDistance * CHUNK_X * 0.55));
+    this.shadows.setRadius(radius);
+    this.shadows.update(this.skyState.sunDir, this.player.position, this.player.forward);
+    this.env.uShadowMatrix.value.copy(this.shadows.matrix);
+    this.env.uShadowTexel.value = 1 / this.shadows.size;
+    this.env.uShadowRadius.value = radius;
+
+    const skyVisible = this.sky.mesh.visible;
+    const particlesVisible = this.particles.mesh.visible;
+    const weatherVisible = this.weather.points.visible;
+    const heldVisible = this.heldView.group.visible;
+    const outlineVisible = this.outline.visible;
+    this.sky.mesh.visible = false;
+    this.particles.mesh.visible = false;
+    this.weather.points.visible = false;
+    this.heldView.group.visible = false;
+    this.outline.visible = false;
+    this.breakOverlay.visible = false;
+
+    this.chunks.beginShadowPass(this.shadowMaterial);
+    this.scene.overrideMaterial = this.shadowMaterial;
+    this.renderer.setRenderTarget(this.shadows.target);
+    this.renderer.clear();
+    this.renderer.render(this.scene, this.shadows.camera);
+    this.scene.overrideMaterial = null;
+    this.chunks.endShadowPass();
+
+    this.sky.mesh.visible = skyVisible;
+    this.particles.mesh.visible = particlesVisible;
+    this.weather.points.visible = weatherVisible;
+    this.heldView.group.visible = heldVisible;
+    this.outline.visible = outlineVisible;
+
+    this.env.uShadowMap.value = this.shadows.depthTexture;
+  }
+
+  /** Les ombres s'effacent au crépuscule : rasantes, elles deviennent fausses. */
+  private shadowStrength(): number {
+    if (!this.settings.shadows) return 0;
+    const elev = this.skyState.sunDir.y;
+    return Math.max(0, Math.min(1, (elev - 0.06) / 0.18)) * 0.92;
+  }
+
   private render(): void {
     if (!this.post) return;
     if (this.save && this.worldReady) {
+      this.renderShadowPass();
       this.renderer.setRenderTarget(this.post.renderTarget);
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);

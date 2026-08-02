@@ -4,7 +4,8 @@
  * une seule écriture met tout le rendu à jour.
  */
 
-import { Color, Vector3, type IUniform } from 'three';
+import { Color, Matrix4, Vector3, type IUniform } from 'three';
+import type { Texture } from 'three';
 
 export interface EnvUniforms {
   uTime: IUniform<number>;
@@ -27,6 +28,15 @@ export interface EnvUniforms {
   uCloudCover: IUniform<number>;
   uRain: IUniform<number>;
   uRenderDistance: IUniform<number>;
+  /** Carte de profondeur vue du soleil, ou null si les ombres sont coupées. */
+  uShadowMap: IUniform<Texture | null>;
+  uShadowMatrix: IUniform<Matrix4>;
+  /** 0 = pas d'ombres ; sinon intensité de l'assombrissement. */
+  uShadowStrength: IUniform<number>;
+  /** Taille d'un texel de la carte, en unités monde (pour le décalage de biais). */
+  uShadowTexel: IUniform<number>;
+  /** Rayon couvert par la carte : au-delà, les ombres s'estompent. */
+  uShadowRadius: IUniform<number>;
 }
 
 export function createEnvUniforms(): EnvUniforms {
@@ -51,5 +61,10 @@ export function createEnvUniforms(): EnvUniforms {
     uCloudCover: { value: 0.45 },
     uRain: { value: 0 },
     uRenderDistance: { value: 128 },
+    uShadowMap: { value: null },
+    uShadowMatrix: { value: new Matrix4() },
+    uShadowStrength: { value: 0 },
+    uShadowTexel: { value: 1 / 2048 },
+    uShadowRadius: { value: 80 },
   };
 }

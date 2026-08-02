@@ -50,6 +50,10 @@ export interface ChunkManagerStats {
 
 export class ChunkManager {
   readonly group = new Group();
+  /** Terrain opaque et alpha-testé : seul contenu qui projette une ombre. */
+  readonly solidGroup = new Group();
+  /** Fluides, séparés pour pouvoir les exclure de la passe d'ombre. */
+  readonly waterGroup = new Group();
   private meshes = new Map<string, ChunkMeshes>();
   private pendingGen = new Set<string>();
   private pendingMesh = new Set<string>();
@@ -73,6 +77,11 @@ export class ChunkManager {
   ) {
     this.group.name = 'chunks';
     this.group.matrixAutoUpdate = false;
+    this.solidGroup.name = 'chunks-solid';
+    this.waterGroup.name = 'chunks-water';
+    this.solidGroup.matrixAutoUpdate = false;
+    this.waterGroup.matrixAutoUpdate = false;
+    this.group.add(this.solidGroup, this.waterGroup);
   }
 
   setCenter(x: number, z: number): void {
@@ -248,9 +257,10 @@ export class ChunkManager {
         const slot = slots[i];
         const layer = task.layers[i];
         const old = entry[slot];
+        const parent = i === 2 ? this.waterGroup : this.solidGroup;
         if (old) {
           old.geometry.dispose();
-          this.group.remove(old);
+          parent.remove(old);
           entry[slot] = null;
         }
         if (!layer) continue;
@@ -261,7 +271,7 @@ export class ChunkManager {
         mesh.renderOrder = i === 2 ? 10 : 0;
         mesh.name = `${task.key}:${slot}`;
         entry[slot] = mesh;
-        this.group.add(mesh);
+        parent.add(mesh);
       }
       c.meshedRev = task.rev;
       // Une modification est survenue pendant le maillage : on recommence.
@@ -315,11 +325,32 @@ export class ChunkManager {
     if (!e) return;
     for (const m of [e.opaque, e.cutout, e.water]) {
       if (!m) continue;
-      this.group.remove(m);
+      m.removeFromParent();
       m.geometry.dispose();
     }
     this.meshes.delete(key);
     this.meshesChanged = true;
+  }
+
+  /**
+   * Bascule le terrain solide sur le matériau de profondeur, le temps du rendu
+   * vu du soleil. Les fluides sont masqués : une eau translucide ne doit pas
+   * projeter d'ombre pleine sur les fonds.
+   */
+  beginShadowPass(shadowMaterial: Material): void {
+    this.waterGroup.visible = false;
+    for (const e of this.meshes.values()) {
+      if (e.opaque) e.opaque.material = shadowMaterial;
+      if (e.cutout) e.cutout.material = shadowMaterial;
+    }
+  }
+
+  endShadowPass(): void {
+    this.waterGroup.visible = true;
+    for (const e of this.meshes.values()) {
+      if (e.opaque) e.opaque.material = this.materials.opaque;
+      if (e.cutout) e.cutout.material = this.materials.cutout;
+    }
   }
 
   /** Force le remaillage de tout ce qui est chargé (changement de qualité). */

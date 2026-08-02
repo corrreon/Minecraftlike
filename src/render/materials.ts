@@ -19,7 +19,10 @@ in float vdata;
 
 uniform float uTime;
 uniform float uRain;
+uniform mat4 uShadowMatrix;
+uniform float uShadowStrength;
 
+out vec4 vShadowCoord;
 out vec2 vUv;
 out vec3 vTint;
 out vec3 vWorld;
@@ -70,6 +73,11 @@ void main() {
   vWorld = world.xyz;
   vNormal = normalize(mat3(modelMatrix) * normal);
 
+  // Décalage le long de la normale : supprime l'auto-ombrage en « rayures ».
+  vShadowCoord = uShadowStrength > 0.0
+    ? uShadowMatrix * vec4(world.xyz + vNormal * 0.035, 1.0)
+    : vec4(0.0);
+
   vec4 mv = viewMatrix * world;
   vFogDepth = -mv.z;
   gl_Position = projectionMatrix * mv;
@@ -94,7 +102,12 @@ uniform float uFogDensity;
 uniform float uDayFactor;
 uniform int uUnderwater;
 uniform vec3 uCameraPos;
+uniform sampler2D uShadowMap;
+uniform float uShadowStrength;
+uniform float uShadowTexel;
+uniform float uShadowRadius;
 
+in vec4 vShadowCoord;
 in vec2 vUv;
 in vec3 vTint;
 in vec3 vWorld;
@@ -105,6 +118,35 @@ in float vFogDepth;
 flat in int vLayer;
 flat in int vWave;
 layout(location = 0) out vec4 fragColor;
+
+/**
+ * Fraction de lumière solaire atteignant le fragment.
+ * PCF 3x3 sur la carte de profondeur, avec biais dépendant de l'inclinaison et
+ * fondu progressif au bord de la zone couverte.
+ */
+float sunVisibility(vec3 n) {
+  if (uShadowStrength <= 0.0) return 1.0;
+  vec3 proj = vShadowCoord.xyz / vShadowCoord.w;
+  if (proj.z > 1.0 || proj.x < 0.0 || proj.x > 1.0 || proj.y < 0.0 || proj.y > 1.0) return 1.0;
+
+  float slope = 1.0 - clamp(dot(n, uSunDir), 0.0, 1.0);
+  float bias = 0.00035 + 0.0022 * slope;
+
+  float sum = 0.0;
+  for (int y = -1; y <= 1; y++) {
+    for (int x = -1; x <= 1; x++) {
+      vec2 off = vec2(float(x), float(y)) * uShadowTexel;
+      float depth = texture(uShadowMap, proj.xy + off).r;
+      sum += proj.z - bias > depth ? 0.0 : 1.0;
+    }
+  }
+  float vis = sum / 9.0;
+
+  // Estompe l'ombre près du bord de la carte pour éviter une coupure nette.
+  vec2 edge = abs(proj.xy - 0.5) * 2.0;
+  float fade = 1.0 - smoothstep(0.82, 1.0, max(edge.x, edge.y));
+  return mix(1.0, vis, fade * uShadowStrength);
+}
 
 // Luminosité par orientation de face : lisibilité du relief façon voxel.
 float faceShade(vec3 n) {
@@ -129,7 +171,10 @@ void main() {
   // --- Éclairage voxel ---------------------------------------------------
   float sky = vLight.x;
   float blk = vLight.y;
-  vec3 skyTerm = uSkyLight * pow(sky, 1.35) * uDayFactor;
+  vec3 n = normalize(vNormal);
+  // Seule la lumière du soleil est occultée : les torches traversent l'ombre.
+  float shadow = sunVisibility(n);
+  vec3 skyTerm = uSkyLight * pow(sky, 1.35) * uDayFactor * mix(0.32, 1.0, shadow);
   vec3 blockTerm = uBlockLight * pow(blk, 1.45);
   vec3 lighting = max(skyTerm, blockTerm);
   // L'ambiante ne s'ajoute que là où la scène est sombre : en plein jour elle
@@ -139,11 +184,10 @@ void main() {
   // Lueur résiduelle du ciel nocturne, pour ne jamais tomber au noir absolu.
   lighting = max(lighting, uAmbient * (0.35 + 0.65 * sky));
 
-  vec3 n = normalize(vNormal);
   float shade = faceShade(n);
   // Petit apport directionnel : les faces tournées vers le soleil ressortent.
   float sunFacing = max(dot(n, uSunDir), 0.0);
-  lighting *= shade * (0.92 + 0.16 * sunFacing * uDayFactor);
+  lighting *= shade * (0.92 + 0.16 * sunFacing * uDayFactor * shadow);
   lighting *= vAO;
 
   vec3 color = albedo * lighting;
@@ -157,7 +201,11 @@ void main() {
     float r2 = sin(vWorld.x * 0.9 - uTime * 1.1) * 0.5 + sin(vWorld.z * 3.1 + uTime * 2.2) * 0.5;
     vec3 nn = normalize(n + vec3(r1, 0.0, r2) * 0.14);
     vec3 H = normalize(V + uSunDir);
-    float spec = pow(max(dot(nn, H), 0.0), 110.0) * uDayFactor;
+    // Scintillement : un lobe large plus un piqué serré, tous deux éteints
+    // lorsque la surface est à l'ombre.
+    float spec = pow(max(dot(nn, H), 0.0), 110.0) * 1.0
+               + pow(max(dot(nn, H), 0.0), 900.0) * 2.4;
+    spec *= uDayFactor * shadow;
     float fres = pow(1.0 - clamp(dot(nn, V), 0.0, 1.0), 4.0);
     color += uSunColor * spec * 1.6 * sky;
     color = mix(color, uFogSky * (0.35 + 0.65 * uDayFactor), fres * 0.45 * sky);
@@ -203,6 +251,11 @@ export function createTerrainMaterial(variant: TerrainVariant, atlas: Texture, e
       uUnderwater: env.uUnderwater,
       uCameraPos: env.uCameraPos,
       uRain: env.uRain,
+      uShadowMap: env.uShadowMap,
+      uShadowMatrix: env.uShadowMatrix,
+      uShadowStrength: env.uShadowStrength,
+      uShadowTexel: env.uShadowTexel,
+      uShadowRadius: env.uShadowRadius,
     },
     vertexShader: TERRAIN_VERTEX,
     fragmentShader: TERRAIN_FRAGMENT,
@@ -211,5 +264,90 @@ export function createTerrainMaterial(variant: TerrainVariant, atlas: Texture, e
     side: variant === 'cutout' ? DoubleSide : FrontSide,
   });
   m.name = `terrain-${variant}`;
+  return m;
+}
+
+// ---------------------------------------------------------------------------
+// Passe d'ombre
+// ---------------------------------------------------------------------------
+
+/**
+ * Rendu de profondeur vu du soleil. Reproduit exactement le déplacement animé
+ * des sommets du terrain, faute de quoi les ombres du feuillage « nageraient »
+ * par rapport à la géométrie.
+ *
+ * Le même matériau sert aux entités : leur géométrie ne fournit pas `vdata`,
+ * l'attribut vaut donc 0, l'index de texture est 0 (`air`) et le test alpha est
+ * ignoré — une créature projette une ombre pleine, ce qui est le bon résultat.
+ */
+const SHADOW_VERTEX = /* glsl */ `
+precision highp float;
+precision highp int;
+
+in float vdata;
+uniform float uTime;
+uniform float uRain;
+
+out vec2 vUv;
+flat out int vLayer;
+
+void main() {
+  int d = int(vdata + 0.5);
+  vLayer = d & 511;
+  int wave = (d >> 19) & 3;
+  bool fluidTop = ((d >> 21) & 1) == 1;
+  vUv = uv;
+
+  vec4 world = modelMatrix * vec4(position, 1.0);
+  if (wave == 3) {
+    float sway = sin(uTime * 1.9 + world.x * 0.65 + world.z * 0.5) * 0.055
+               + sin(uTime * 3.3 + world.z * 1.1) * 0.02;
+    sway *= (1.0 + uRain * 1.6);
+    world.xz += sway * uv.y;
+  } else if (wave == 1) {
+    float sway = sin(uTime * 1.3 + world.x * 0.4 + world.y * 0.2 + world.z * 0.35) * 0.028;
+    world.xz += sway * (1.0 + uRain);
+  } else if (wave == 2 && fluidTop) {
+    float w = sin(world.x * 1.1 + uTime * 1.7) * 0.5 + sin(world.z * 0.9 - uTime * 1.3) * 0.5;
+    world.y += w * 0.035;
+  }
+  gl_Position = projectionMatrix * viewMatrix * world;
+}
+`;
+
+const SHADOW_FRAGMENT = /* glsl */ `
+precision highp float;
+precision highp int;
+precision highp sampler2DArray;
+
+uniform sampler2DArray uAtlas;
+in vec2 vUv;
+flat in int vLayer;
+layout(location = 0) out vec4 fragColor;
+
+void main() {
+  // Les feuillages doivent laisser passer la lumière par leurs trous.
+  if (vLayer > 0) {
+    float a = texture(uAtlas, vec3(fract(vUv), float(vLayer))).a;
+    if (a < 0.5) discard;
+  }
+  fragColor = vec4(1.0);
+}
+`;
+
+export function createShadowMaterial(atlas: Texture, env: EnvUniforms): ShaderMaterial {
+  const m = new ShaderMaterial({
+    glslVersion: GLSL3,
+    uniforms: {
+      uAtlas: { value: atlas },
+      uTime: env.uTime,
+      uRain: env.uRain,
+    },
+    vertexShader: SHADOW_VERTEX,
+    fragmentShader: SHADOW_FRAGMENT,
+    side: DoubleSide,
+    colorWrite: false,
+  });
+  m.name = 'terrain-shadow';
   return m;
 }
