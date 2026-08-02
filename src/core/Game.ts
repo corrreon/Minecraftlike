@@ -39,7 +39,7 @@ import { AudioEngine, type SoundGroup } from '../audio/Audio';
 import { Mob, ItemEntity, MOBS, coloredBox, findSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
 import { Container, HOTBAR_SIZE, makeStack, type ItemStack } from '../items/Inventory';
 import { Inventory } from '../items/Inventory';
-import { ITEM_BY_KEY, SMELTING, blockDrops, breakInfo, type ItemDef } from '../items/items';
+import { ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, blockDrops, breakInfo, type ItemDef } from '../items/items';
 import { GameMode, Player } from '../player/Player';
 import { raycast, type RaycastHit } from '../player/physics';
 import { TILE, buildAtlas, type Atlas } from '../render/atlas';
@@ -933,6 +933,9 @@ export class Game {
 
     const st = this.input.state;
 
+    // --- Prise du bloc visé (clic milieu) ---
+    if (this.input.takePick() && hit) this.pickBlock(hit.block);
+
     // --- Attaque / minage ---
     if (st.attack) {
       const mob = this.pickMob(eye, dir, reach);
@@ -959,6 +962,42 @@ export class Game {
     if (st.use && this.placeCooldown <= 0) {
       this.placeCooldown = 0.22;
       this.useItem(hit);
+    }
+  }
+
+  /**
+   * Place le bloc visé dans la barre rapide. S'il s'y trouve déjà on s'y
+   * positionne simplement ; sinon on le remonte depuis l'inventaire, et en
+   * créatif on le crée de toutes pièces.
+   */
+  private pickBlock(blockId: number): void {
+    const def = ITEM_OF_BLOCK.get(blockId);
+    if (!def) return;
+    const inv = this.inventory;
+
+    for (let i = 0; i < HOTBAR_SIZE; i++) {
+      if (inv.main.get(i)?.item === def) {
+        inv.selected = i;
+        this.hud.updateHotbar(inv, true);
+        return;
+      }
+    }
+
+    // Ailleurs dans le sac : on l'échange avec la case courante.
+    for (let i = HOTBAR_SIZE; i < inv.main.size; i++) {
+      if (inv.main.get(i)?.item !== def) continue;
+      const current = inv.main.get(inv.selected);
+      inv.main.set(inv.selected, inv.main.get(i));
+      inv.main.set(i, current);
+      this.hud.updateHotbar(inv, true);
+      this.audio.click();
+      return;
+    }
+
+    if (this.player.mode === GameMode.Creative) {
+      inv.main.set(inv.selected, makeStack(def, def.maxStack));
+      this.hud.updateHotbar(inv, true);
+      this.audio.click();
     }
   }
 

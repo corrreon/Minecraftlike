@@ -149,12 +149,24 @@ export class Input {
 
   // --- Souris -------------------------------------------------------------
 
+  /** Clic milieu : demande de « prendre le bloc visé », consommée une fois. */
+  private pickPending = false;
+
   private handleMouseDown = (e: MouseEvent): void => {
     if (!this.locked) return;
     if (e.button === 0) this.state.attack = true;
     if (e.button === 2) this.state.use = true;
-    if (e.button === 1) e.preventDefault();
+    if (e.button === 1) {
+      e.preventDefault();
+      this.pickPending = true;
+    }
   };
+
+  takePick(): boolean {
+    const p = this.pickPending;
+    this.pickPending = false;
+    return p;
+  }
 
   private handleMouseUp = (e: MouseEvent): void => {
     if (e.button === 0) this.state.attack = false;

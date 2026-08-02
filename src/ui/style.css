@@ -731,7 +731,7 @@ label.field > span {
   display: grid;
   grid-template-columns: repeat(auto-fill, 44px);
   gap: 3px;
-  max-height: 48vh;
+  max-height: 32vh;
   overflow: auto;
   justify-content: center;
   padding: 4px;

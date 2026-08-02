@@ -296,6 +296,7 @@ export class Screens {
       ['Clic gauche', 'Casser un bloc / attaquer'],
       ['Clic droit', 'Poser un bloc / utiliser'],
       ['Molette, 1-9', 'Changer d’objet'],
+      ['Clic milieu', 'Prendre le bloc visé dans la barre rapide'],
       ['E', 'Inventaire'],
       ['F', 'Vue à la troisième personne'],
       ['F3', 'Informations de débogage'],
@@ -338,8 +339,15 @@ export class Screens {
     const p = el('div', 'panel wide', s);
     el('h1', undefined, p).textContent = craftSize === 3 ? 'ÉTABLI' : 'INVENTAIRE';
 
-    if (this.ctx.isCreative()) {
+    const creative = this.ctx.isCreative();
+    if (creative) {
       this.buildCreativePicker(p);
+      // La barre rapide vient immédiatement après le sélecteur : c'est là
+      // qu'on dépose ce qu'on vient de prendre, elle doit rester sous les yeux.
+      const hotSec = el('div', 'inv-section', p);
+      el('h3', undefined, hotSec).textContent = 'Barre rapide — déposez ici';
+      const hotGridTop = el('div', 'inv-grid', hotSec);
+      for (let i = 0; i < HOTBAR_SIZE; i++) this.slot(hotGridTop, inv.main, i, {});
     } else {
       // Zone d'artisanat.
       const area = el('div', 'craft-area', p);
@@ -374,10 +382,12 @@ export class Screens {
     const mainGrid = el('div', 'inv-grid', mainSec);
     for (let i = HOTBAR_SIZE; i < MAIN_SIZE; i++) this.slot(mainGrid, inv.main, i, {});
 
-    const hotSec = el('div', 'inv-section', p);
-    el('h3', undefined, hotSec).textContent = 'Barre rapide';
-    const hotGrid = el('div', 'inv-grid', hotSec);
-    for (let i = 0; i < HOTBAR_SIZE; i++) this.slot(hotGrid, inv.main, i, {});
+    if (!creative) {
+      const hotSec = el('div', 'inv-section', p);
+      el('h3', undefined, hotSec).textContent = 'Barre rapide';
+      const hotGrid = el('div', 'inv-grid', hotSec);
+      for (let i = 0; i < HOTBAR_SIZE; i++) this.slot(hotGrid, inv.main, i, {});
+    }
 
     this.button(p, 'Fermer', '', () => this.ctx.resume());
   }
@@ -386,7 +396,8 @@ export class Screens {
 
   private buildCreativePicker(parent: HTMLElement): void {
     const sec = el('div', 'inv-section', parent);
-    el('h3', undefined, sec).textContent = 'Tous les objets — clic pour prendre une pile';
+    el('h3', undefined, sec).textContent =
+      'Tous les objets — clic pour prendre une pile, clic droit pour une unité';
     const search = el('input', undefined, sec);
     search.type = 'text';
     search.placeholder = 'Rechercher…';
