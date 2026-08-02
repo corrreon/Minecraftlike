@@ -90,6 +90,7 @@ precision highp int;
 precision highp sampler2DArray;
 
 uniform sampler2DArray uAtlas;
+uniform sampler2DArray uNormalAtlas;
 uniform float uTime;
 uniform vec3 uSunDir;
 uniform vec3 uSunColor;
@@ -148,6 +149,24 @@ float sunVisibility(vec3 n) {
   return mix(1.0, vis, fade * uShadowStrength);
 }
 
+/**
+ * Repère tangent reconstruit depuis les dérivées d'écran. Évite d'avoir à
+ * stocker une tangente par sommet et reste correct quelle que soit
+ * l'orientation de la face.
+ */
+mat3 cotangentFrame(vec3 N, vec3 p, vec2 uv) {
+  vec3 dp1 = dFdx(p);
+  vec3 dp2 = dFdy(p);
+  vec2 duv1 = dFdx(uv);
+  vec2 duv2 = dFdy(uv);
+  vec3 dp2perp = cross(dp2, N);
+  vec3 dp1perp = cross(N, dp1);
+  vec3 T = dp2perp * duv1.x + dp1perp * duv2.x;
+  vec3 B = dp2perp * duv1.y + dp1perp * duv2.y;
+  float invmax = inversesqrt(max(dot(T, T), dot(B, B)) + 1e-8);
+  return mat3(T * invmax, B * invmax, N);
+}
+
 // Luminosité par orientation de face : lisibilité du relief façon voxel.
 float faceShade(vec3 n) {
   float up = max(n.y, 0.0);
@@ -168,10 +187,22 @@ void main() {
 
   vec3 albedo = texel.rgb * vTint;
 
-  // --- Éclairage voxel ---------------------------------------------------
+  // --- Relief par pixel ---------------------------------------------------
   float sky = vLight.x;
   float blk = vLight.y;
   vec3 n = normalize(vNormal);
+  vec3 N = n;
+  float roughness = 0.9;
+  #ifndef WATER
+    // Les quads croisés n'ont pas de repère tangent cohérent : on les laisse
+    // en éclairage plat.
+    if (vWave != 3) {
+      vec4 nm = textureGrad(uNormalAtlas, vec3(fract(vUv), float(vLayer)), duvx, duvy);
+      roughness = nm.a;
+      vec3 tn = nm.xyz * 2.0 - 1.0;
+      N = normalize(cotangentFrame(n, vWorld, vUv) * tn);
+    }
+  #endif
   // Seule la lumière du soleil est occultée : les torches traversent l'ombre.
   float shadow = sunVisibility(n);
   vec3 skyTerm = uSkyLight * pow(sky, 1.35) * uDayFactor * mix(0.32, 1.0, shadow);
@@ -184,13 +215,28 @@ void main() {
   // Lueur résiduelle du ciel nocturne, pour ne jamais tomber au noir absolu.
   lighting = max(lighting, uAmbient * (0.35 + 0.65 * sky));
 
+  // L'ombrage par face garde la lecture « voxel » ; le relief par pixel s'y
+  // superpose sans casser la silhouette cubique.
   float shade = faceShade(n);
-  // Petit apport directionnel : les faces tournées vers le soleil ressortent.
-  float sunFacing = max(dot(n, uSunDir), 0.0);
-  lighting *= shade * (0.92 + 0.16 * sunFacing * uDayFactor * shadow);
+  float sunFacing = max(dot(N, uSunDir), 0.0);
+  float bump = mix(1.0, 0.82 + 0.36 * sunFacing, uDayFactor * shadow * sky);
+  lighting *= shade * bump;
   lighting *= vAO;
 
   vec3 color = albedo * lighting;
+
+  // --- Spéculaire du soleil ----------------------------------------------
+  #ifndef WATER
+    if (uDayFactor > 0.01 && shadow > 0.01) {
+      vec3 V = normalize(uCameraPos - vWorld);
+      vec3 H = normalize(V + uSunDir);
+      float gloss = mix(6.0, 180.0, 1.0 - roughness);
+      float spec = pow(max(dot(N, H), 0.0), gloss);
+      // Métaux et glace brillent, laine et terre non.
+      spec *= (1.0 - roughness) * (1.0 - roughness);
+      color += uSunColor * spec * 1.5 * uDayFactor * shadow * sky;
+    }
+  #endif
 
   // --- Reflets et transparence des fluides -------------------------------
   float alpha = texel.a;
@@ -228,7 +274,12 @@ void main() {
 
 export type TerrainVariant = 'opaque' | 'cutout' | 'water';
 
-export function createTerrainMaterial(variant: TerrainVariant, atlas: Texture, env: EnvUniforms): ShaderMaterial {
+export function createTerrainMaterial(
+  variant: TerrainVariant,
+  atlas: Texture,
+  normalAtlas: Texture,
+  env: EnvUniforms,
+): ShaderMaterial {
   const defines: Record<string, boolean> = {};
   if (variant === 'cutout') defines.CUTOUT = true;
   if (variant === 'water') defines.WATER = true;
@@ -238,6 +289,7 @@ export function createTerrainMaterial(variant: TerrainVariant, atlas: Texture, e
     defines,
     uniforms: {
       uAtlas: { value: atlas },
+      uNormalAtlas: { value: normalAtlas },
       uTime: env.uTime,
       uSunDir: env.uSunDir,
       uSunColor: env.uSunColor,

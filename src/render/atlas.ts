@@ -1,9 +1,15 @@
 /**
  * Génération procédurale de l'atlas de textures.
  *
- * Le jeu n'embarque aucune image : chaque tuile 16×16 est peinte au démarrage
+ * Le jeu n'embarque aucune image : chaque tuile 32×32 est peinte au démarrage
  * dans un `DataArrayTexture`, ce qui supprime tout saignement d'atlas et
  * autorise le mip-mapping propre par couche.
+ *
+ * Chaque peintre produit en même temps un **champ de hauteur**, d'où l'on
+ * dérive une carte de normales tangentes (plus une rugosité par matériau,
+ * rangée dans le canal alpha). C'est ce relief par pixel qui fait ressortir le
+ * mortier, les rainures des planches ou les cristaux de minerai sous la
+ * lumière rasante.
  */
 
 import {
@@ -18,7 +24,9 @@ import {
 import { TEXTURE_NAMES } from '../world/blocks';
 import { mulberry32 } from '../world/noise';
 
-export const TILE = 16;
+export const TILE = 32;
+/** Les motifs figuratifs sont dessinés sur une grille 16 puis agrandis. */
+const S = TILE / 16;
 const STRIDE = TILE * TILE * 4;
 
 type RGB = [number, number, number];
@@ -28,6 +36,9 @@ const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
 
 class Tile {
   readonly data = new Uint8Array(STRIDE);
+  /** Relief, dans [0,1]. Rempli automatiquement depuis la luminance si nul. */
+  readonly height = new Float32Array(TILE * TILE);
+  private heightWritten = false;
 
   set(x: number, y: number, c: RGB, a = 255, mul = 1): void {
     const i = (y * TILE + x) * 4;
@@ -37,33 +48,70 @@ class Tile {
     this.data[i + 3] = a;
   }
 
-  get(x: number, y: number): RGB {
-    const i = (((y % TILE) + TILE) % TILE) * TILE * 4 + (((x % TILE) + TILE) % TILE) * 4;
-    return [this.data[i], this.data[i + 1], this.data[i + 2]];
+  /** Écrit un « gros pixel » S×S, pour les motifs pensés en 16×16. */
+  px(x: number, y: number, c: RGB, a = 255, mul = 1): void {
+    for (let dy = 0; dy < S; dy++) {
+      for (let dx = 0; dx < S; dx++) {
+        const xx = x * S + dx;
+        const yy = y * S + dy;
+        if (xx < TILE && yy < TILE) this.set(xx, yy, c, a, mul);
+      }
+    }
   }
 
-  alphaAt(x: number, y: number): number {
-    return this.data[(y * TILE + x) * 4 + 3];
+  setHeight(x: number, y: number, h: number): void {
+    this.height[y * TILE + x] = h;
+    this.heightWritten = true;
   }
 
-  fill(c: RGB, a = 255): void {
-    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) this.set(x, y, c, a);
+  /** Creuse le relief sur un « gros pixel ». */
+  pxHeight(x: number, y: number, h: number): void {
+    for (let dy = 0; dy < S; dy++)
+      for (let dx = 0; dx < S; dx++) {
+        const xx = x * S + dx, yy = y * S + dy;
+        if (xx < TILE && yy < TILE) this.setHeight(xx, yy, h);
+      }
   }
 
   clear(): void {
     this.data.fill(0);
   }
 
-  /** Assombrit ou éclaircit un pixel existant. */
   mul(x: number, y: number, f: number): void {
     const i = (y * TILE + x) * 4;
     this.data[i] = clamp255(this.data[i] * f);
     this.data[i + 1] = clamp255(this.data[i + 1] * f);
     this.data[i + 2] = clamp255(this.data[i + 2] * f);
   }
+
+  /** Assombrit une bande horizontale exprimée en grille 16. */
+  darkenRow16(y: number, f: number): void {
+    for (let dy = 0; dy < S; dy++) {
+      const yy = y * S + dy;
+      if (yy >= TILE) continue;
+      for (let x = 0; x < TILE; x++) this.mul(x, yy, f);
+    }
+  }
+
+  /**
+   * Complète le champ de hauteur à partir de la luminance quand le peintre ne
+   * l'a pas décrit : sur des textures procédurales, sombre = creux est une
+   * approximation qui tient remarquablement bien.
+   */
+  finalizeHeight(): void {
+    if (this.heightWritten) return;
+    for (let i = 0; i < this.height.length; i++) {
+      const j = i * 4;
+      const lum = (this.data[j] * 0.299 + this.data[j + 1] * 0.587 + this.data[j + 2] * 0.114) / 255;
+      this.height[i] = lum;
+    }
+  }
 }
 
-/** Bruit de valeur bouclable sur la tuile (pas de couture entre blocs). */
+// ---------------------------------------------------------------------------
+// Bruits bouclables
+// ---------------------------------------------------------------------------
+
 function tileNoise(cells: number, rnd: () => number): Float32Array {
   const g = new Float32Array(cells * cells);
   for (let i = 0; i < g.length; i++) g[i] = rnd();
@@ -84,7 +132,7 @@ function tileNoise(cells: number, rnd: () => number): Float32Array {
   return out;
 }
 
-function fbmTile(rnd: () => number, octaves = 3): Float32Array {
+function fbmTile(rnd: () => number, octaves = 4): Float32Array {
   const out = new Float32Array(TILE * TILE);
   let amp = 1, norm = 0, cells = 2;
   for (let o = 0; o < octaves; o++) {
@@ -92,14 +140,17 @@ function fbmTile(rnd: () => number, octaves = 3): Float32Array {
     for (let i = 0; i < out.length; i++) out[i] += n[i] * amp;
     norm += amp;
     amp *= 0.5;
-    cells *= 2;
+    cells = Math.min(cells * 2, TILE);
   }
   for (let i = 0; i < out.length; i++) out[i] /= norm;
   return out;
 }
 
-/** Remplit avec une couleur modulée par un bruit fractal. */
-function grainy(t: Tile, base: RGB, rnd: () => number, amount = 0.22, octaves = 3): void {
+// ---------------------------------------------------------------------------
+// Briques élémentaires de dessin
+// ---------------------------------------------------------------------------
+
+function grainy(t: Tile, base: RGB, rnd: () => number, amount = 0.22, octaves = 4): void {
   const n = fbmTile(rnd, octaves);
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
@@ -109,8 +160,7 @@ function grainy(t: Tile, base: RGB, rnd: () => number, amount = 0.22, octaves = 
   }
 }
 
-/** Taches de couleur pilotées par le bruit (minerais, mousse…). */
-function blotch(t: Tile, color: RGB, rnd: () => number, threshold: number, cells = 4, jitter = 0.12): void {
+function blotch(t: Tile, color: RGB, rnd: () => number, threshold: number, cells = 5, jitter = 0.12): void {
   const n = tileNoise(cells, rnd);
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
@@ -124,10 +174,30 @@ function speckle(t: Tile, color: RGB, rnd: () => number, count: number, dark = 1
     const x = (rnd() * TILE) | 0;
     const y = (rnd() * TILE) | 0;
     t.set(x, y, color, 255, dark);
+    if (rnd() < 0.5) t.set((x + 1) % TILE, y, color, 255, dark);
   }
 }
 
-/** Motif de cellules irrégulières (pierre taillée, gravier). */
+/**
+ * Fissures : marches aléatoires sombres qui creusent le relief. C'est ce qui
+ * distingue une vraie pierre d'un simple champ de bruit.
+ */
+function cracks(t: Tile, rnd: () => number, count: number, len: number, depth = 0.55): void {
+  for (let i = 0; i < count; i++) {
+    let x = rnd() * TILE;
+    let y = rnd() * TILE;
+    let a = rnd() * Math.PI * 2;
+    for (let k = 0; k < len; k++) {
+      a += (rnd() - 0.5) * 0.9;
+      x = (x + Math.cos(a) + TILE) % TILE;
+      y = (y + Math.sin(a) + TILE) % TILE;
+      const xi = x | 0, yi = y | 0;
+      t.mul(xi, yi, depth + 0.2);
+      t.setHeight(xi, yi, depth * 0.35);
+    }
+  }
+}
+
 function cellular(t: Tile, base: RGB, rnd: () => number, seeds: number, edge = 0.55, variance = 0.3): void {
   const px: number[] = [], py: number[] = [], pv: number[] = [];
   for (let i = 0; i < seeds; i++) {
@@ -139,7 +209,7 @@ function cellular(t: Tile, base: RGB, rnd: () => number, seeds: number, edge = 0
     for (let x = 0; x < TILE; x++) {
       let d0 = 1e9, d1 = 1e9, best = 0;
       for (let i = 0; i < seeds; i++) {
-        // Distance torique pour un motif qui se raccorde.
+        // Distance torique : le motif se raccorde d'une tuile à l'autre.
         let dx = Math.abs(px[i] - x - 0.5);
         let dy = Math.abs(py[i] - y - 0.5);
         if (dx > TILE / 2) dx = TILE - dx;
@@ -149,68 +219,100 @@ function cellular(t: Tile, base: RGB, rnd: () => number, seeds: number, edge = 0
         else if (d < d1) d1 = d;
       }
       const border = Math.sqrt(d1) - Math.sqrt(d0);
-      const f = border < edge ? 0.55 : pv[best];
+      // Joint creusé, galet bombé.
+      const inJoint = border < edge;
+      const f = inJoint ? 0.5 : pv[best];
       t.set(x, y, base, 255, f);
+      t.setHeight(x, y, inJoint ? 0.12 : 0.55 + Math.min(0.45, border * 0.16));
     }
   }
 }
 
-function stripes(t: Tile, base: RGB, rnd: () => number, period: number, vertical: boolean): void {
-  const n = fbmTile(rnd, 3);
+/** Planches ou billes de bois : bandes, rainures creusées, veines et nœuds. */
+function planks(t: Tile, base: RGB, rnd: () => number, period: number, vertical: boolean): void {
+  const n = fbmTile(rnd, 4);
+  const veins = fbmTile(rnd, 3);
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
       const axis = vertical ? x : y;
+      const along = vertical ? y : x;
       const inBand = axis % period;
-      let f = 0.92 + n[y * TILE + x] * 0.18;
-      if (inBand === 0) f *= 0.68; // rainure entre les planches
-      // Veinage.
-      const grain = vertical ? n[((y * 3) % TILE) * TILE + x] : n[y * TILE + ((x * 3) % TILE)];
-      if (grain > 0.72) f *= 0.86;
+      let f = 0.93 + n[y * TILE + x] * 0.16;
+      let h = 0.62 + n[y * TILE + x] * 0.2;
+      // Rainure entre deux planches : deux pixels, dont un plus sombre.
+      if (inBand === 0) { f *= 0.6; h = 0.06; }
+      else if (inBand === 1) { f *= 0.82; h = 0.3; }
+      // Veinage dans le sens de la fibre.
+      const grain = veins[(along % TILE) * TILE + ((axis * 5) % TILE)];
+      if (grain > 0.66) { f *= 0.88; h -= 0.12; }
       t.set(x, y, base, 255, f);
+      t.setHeight(x, y, Math.max(0, h));
     }
+  }
+  // Nœuds.
+  const knots = 1 + ((rnd() * 2) | 0);
+  for (let k = 0; k < knots; k++) {
+    const cx = rnd() * TILE, cy = rnd() * TILE, r = 1.6 + rnd() * 1.6;
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        let dx = Math.abs(x - cx), dy = Math.abs(y - cy);
+        if (dx > TILE / 2) dx = TILE - dx;
+        if (dy > TILE / 2) dy = TILE - dy;
+        const d = Math.hypot(dx, dy);
+        if (d > r) continue;
+        const f = 0.62 + 0.2 * (d / r);
+        t.set(x, y, base, 255, f);
+        t.setHeight(x, y, 0.3 + 0.25 * (d / r));
+      }
   }
 }
 
-function brickPattern(t: Tile, base: RGB, mortar: RGB, rnd: () => number): void {
-  const n = fbmTile(rnd, 2);
+function brickPattern(t: Tile, base: RGB, mortar: RGB, rnd: () => number, brickH = 8, brickW = 16): void {
+  const n = fbmTile(rnd, 3);
+  const joint = Math.max(1, Math.round(S));
   for (let y = 0; y < TILE; y++) {
-    const row = (y / 4) | 0;
-    const offset = row % 2 === 0 ? 0 : 4;
+    const row = Math.floor(y / brickH);
+    const offset = row % 2 === 0 ? 0 : brickW / 2;
     for (let x = 0; x < TILE; x++) {
-      const isMortar = y % 4 === 0 || (x + offset) % 8 === 0;
-      const c = isMortar ? mortar : base;
-      t.set(x, y, c, 255, 0.9 + n[y * TILE + x] * 0.25);
+      const isMortar = y % brickH < joint || (x + offset) % brickW < joint;
+      const v = n[y * TILE + x];
+      t.set(x, y, isMortar ? mortar : base, 255, 0.9 + v * 0.24);
+      // Le mortier est en retrait, la brique légèrement bombée.
+      t.setHeight(x, y, isMortar ? 0.14 : 0.66 + v * 0.3);
     }
   }
 }
 
 function ringPattern(t: Tile, base: RGB, ring: RGB, rnd: () => number): void {
-  const n = fbmTile(rnd, 2);
-  const cx = 7.5, cy = 7.5;
+  const n = fbmTile(rnd, 3);
+  const c = TILE / 2 - 0.5;
+  const spacing = 2.4 * S;
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
-      const d = Math.hypot(x - cx, y - cy) + n[y * TILE + x] * 1.5;
-      const r = Math.round(d) % 3 === 0;
-      t.set(x, y, r ? ring : base, 255, 0.9 + n[y * TILE + x] * 0.22);
+      const d = Math.hypot(x - c, y - c) + n[y * TILE + x] * 2.2;
+      const phase = (d % spacing) / spacing;
+      const onRing = phase < 0.34;
+      t.set(x, y, onRing ? ring : base, 255, 0.9 + n[y * TILE + x] * 0.22);
+      t.setHeight(x, y, onRing ? 0.34 : 0.66 + n[y * TILE + x] * 0.2);
     }
   }
 }
 
-/** Silhouette de plante : tiges verticales bruitées, fond transparent. */
+/** Silhouette de plante : tiges verticales bruitées sur fond transparent. */
 function plant(t: Tile, stem: RGB, rnd: () => number, blades: number, height: number): void {
   t.clear();
   for (let i = 0; i < blades; i++) {
     let x = 1 + ((rnd() * (TILE - 2)) | 0);
-    const h = height * (0.6 + rnd() * 0.4);
+    const h = height * S * (0.6 + rnd() * 0.4);
     const dir = rnd() < 0.5 ? -1 : 1;
+    const w = rnd() < 0.5 ? 1 : Math.max(1, S - 1);
     for (let k = 0; k < h; k++) {
       const y = TILE - 1 - k;
       if (y < 0) break;
-      if (k > h * 0.45 && rnd() < 0.35) x += dir;
+      if (k > h * 0.45 && rnd() < 0.22) x += dir;
       if (x < 0 || x >= TILE) break;
-      const f = 0.7 + (k / h) * 0.5;
-      t.set(x, y, stem, 255, f);
-      if (rnd() < 0.35 && x + 1 < TILE) t.set(x + 1, y, stem, 255, f * 0.85);
+      const f = 0.68 + (k / h) * 0.55;
+      for (let d = 0; d < w; d++) if (x + d < TILE) t.set(x + d, y, stem, 255, f * (d ? 0.86 : 1));
     }
   }
 }
@@ -218,23 +320,114 @@ function plant(t: Tile, stem: RGB, rnd: () => number, blades: number, height: nu
 function flower(t: Tile, stem: RGB, petal: RGB, centerC: RGB, rnd: () => number): void {
   t.clear();
   const cx = 7 + ((rnd() * 2) | 0);
-  for (let y = 8; y < TILE; y++) t.set(cx, y, stem, 255, 0.8 + rnd() * 0.3);
-  t.set(cx - 1, 11, stem, 255, 0.7);
-  t.set(cx + 1, 13, stem, 255, 0.7);
+  for (let y = 8; y < 16; y++) t.px(cx, y, stem, 255, 0.8 + rnd() * 0.3);
+  t.px(cx - 1, 11, stem, 255, 0.72);
+  t.px(cx + 1, 13, stem, 255, 0.72);
   const cy = 5;
   const pts: [number, number][] = [
     [0, -2], [0, -1], [-1, -1], [1, -1], [-2, 0], [-1, 0], [1, 0], [2, 0], [-1, 1], [0, 1], [1, 1], [0, 2],
   ];
-  for (const [dx, dy] of pts) {
-    const x = cx + dx, y = cy + dy;
-    if (x < 0 || x >= TILE || y < 0 || y >= TILE) continue;
-    t.set(x, y, petal, 255, 0.85 + rnd() * 0.3);
+  for (const [dx, dy] of pts) t.px(cx + dx, cy + dy, petal, 255, 0.85 + rnd() * 0.3);
+  t.px(cx, cy, centerC, 255);
+}
+
+/**
+ * Feuillage : masse de folioles trouée. La fréquence haute domine, sinon on
+ * obtient des nuages compacts au lieu d'un branchage aéré.
+ */
+function leaves(t: Tile, r: () => number, base: number): void {
+  const coarse = tileNoise(6, r);
+  const fine = tileNoise(14, r);
+  const grain = tileNoise(TILE / 2, r);
+  const c = rgb(base);
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      const i = y * TILE + x;
+      const v = coarse[i] * 0.45 + fine[i] * 0.55;
+      if (v < 0.42) {
+        t.set(x, y, c, 0);
+        t.setHeight(x, y, 0);
+        continue;
+      }
+      // Nervures sombres et éclats clairs : la masse cesse d'être uniforme.
+      let f = 0.52 + v * 0.8;
+      if (grain[i] < 0.3) f *= 0.72;
+      else if (grain[i] > 0.78) f *= 1.18;
+      t.set(x, y, c, 255, f);
+      t.setHeight(x, y, 0.3 + v * 0.65);
+    }
   }
-  t.set(cx, cy, centerC, 255);
+}
+
+/** Pierre + amas de minerai cristallins, en relief saillant. */
+function oreTile(t: Tile, r: () => number, ore: number): void {
+  stoneBase(t, r, 0x7f7f7f);
+  const n = tileNoise(5, r);
+  const c = rgb(ore);
+  for (let y = 0; y < TILE; y++) {
+    for (let x = 0; x < TILE; x++) {
+      const v = n[y * TILE + x];
+      if (v > 0.70) {
+        t.set(x, y, c, 255, 0.85 + v * 0.4);
+        t.setHeight(x, y, 0.9);
+      } else if (v > 0.63) {
+        t.set(x, y, c, 255, 0.55);
+        t.setHeight(x, y, 0.72);
+      }
+    }
+  }
+}
+
+function stoneBase(t: Tile, r: () => number, base: number): void {
+  grainy(t, rgb(base), r, 0.26, 5);
+  speckle(t, rgb(base), r, 26, 0.82);
+  cracks(t, r, 3, 22, 0.6);
+}
+
+function metalTile(t: Tile, r: () => number, base: number): void {
+  grainy(t, rgb(base), r, 0.1, 3);
+  // Biseau : clair en haut à gauche, sombre en bas à droite.
+  const b = Math.max(1, Math.round(S));
+  for (let i = 0; i < TILE; i++) {
+    for (let k = 0; k < b; k++) {
+      t.mul(i, k, 1.14);
+      t.mul(k, i, 1.1);
+      t.mul(i, TILE - 1 - k, 0.84);
+      t.mul(TILE - 1 - k, i, 0.87);
+      t.setHeight(i, k, 0.9);
+      t.setHeight(k, i, 0.88);
+      t.setHeight(i, TILE - 1 - k, 0.3);
+      t.setHeight(TILE - 1 - k, i, 0.32);
+    }
+  }
+  for (let y = b; y < TILE - b; y++) for (let x = b; x < TILE - b; x++) t.setHeight(x, y, 0.66);
+}
+
+function mushroom(t: Tile, r: () => number, cap: number, spot: number): void {
+  t.clear();
+  for (let y = 9; y < 16; y++) {
+    t.px(7, y, rgb(0xe0d8c0), 255, 0.85 + r() * 0.2);
+    t.px(8, y, rgb(0xc8bfa4), 255);
+  }
+  for (let y = 4; y < 10; y++) {
+    const w = y < 6 ? 3 : y < 8 ? 5 : 4;
+    for (let x = 8 - w; x <= 7 + w; x++) {
+      if (x < 0 || x >= 16) continue;
+      t.px(x, y, rgb(cap), 255, 0.85 + r() * 0.3);
+    }
+  }
+  for (let i = 0; i < 4; i++) t.px(4 + ((r() * 8) | 0), 5 + ((r() * 4) | 0), rgb(spot), 255);
+}
+
+function sapling(t: Tile, r: () => number): void {
+  t.clear();
+  for (let y = 10; y < 16; y++) t.px(7, y, rgb(0x6b4a2a), 255, 0.9);
+  const pts: [number, number][] = [[7, 4], [6, 5], [8, 5], [5, 6], [7, 6], [9, 6], [6, 7], [8, 7], [7, 8], [5, 8], [9, 8], [7, 9]];
+  for (const [x, y] of pts) t.px(x, y, rgb(0xffffff), 255, 0.75 + r() * 0.4);
 }
 
 // ---------------------------------------------------------------------------
-// Peintres par nom de texture.
+// Peintres par nom de texture
 // ---------------------------------------------------------------------------
 
 const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
@@ -242,102 +435,136 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
   missing: (t) => {
     for (let y = 0; y < TILE; y++)
       for (let x = 0; x < TILE; x++)
-        t.set(x, y, (x >> 3) % 2 === (y >> 3) % 2 ? [0, 0, 0] : [248, 0, 248]);
+        t.set(x, y, (x >> 4) % 2 === (y >> 4) % 2 ? [0, 0, 0] : [248, 0, 248]);
   },
 
-  stone: (t, r) => { grainy(t, rgb(0x7f7f7f), r, 0.28, 4); speckle(t, rgb(0x6a6a6a), r, 12, 1); },
-  andesite: (t, r) => { grainy(t, rgb(0x898b89), r, 0.2, 4); speckle(t, rgb(0x74766f), r, 20, 1); },
-  granite: (t, r) => { grainy(t, rgb(0x9a6b5c), r, 0.22, 4); speckle(t, rgb(0xb08b7b), r, 22, 1); },
-  diorite: (t, r) => { grainy(t, rgb(0xcfcfcf), r, 0.2, 4); speckle(t, rgb(0xa8a8a8), r, 22, 1); },
-  cobblestone: (t, r) => { cellular(t, rgb(0x7d7d7d), r, 7, 0.7, 0.36); speckle(t, rgb(0x616161), r, 10, 1); },
-  mossy_cobblestone: (t, r) => { cellular(t, rgb(0x7d7d7d), r, 7, 0.7, 0.36); blotch(t, rgb(0x51702f), r, 0.52, 4, 0.2); },
-  stone_bricks: (t, r) => brickPattern(t, rgb(0x7b7b7b), rgb(0x5f5f5f), r),
-  bricks: (t, r) => brickPattern(t, rgb(0x9a5b48), rgb(0xb9ada6), r),
-  bedrock: (t, r) => { cellular(t, rgb(0x565656), r, 10, 0.55, 0.6); speckle(t, rgb(0x2a2a2a), r, 26, 1); },
-  obsidian: (t, r) => { grainy(t, rgb(0x14101f), r, 0.5, 3); speckle(t, rgb(0x4a3a72), r, 10, 1); },
+  stone: (t, r) => stoneBase(t, r, 0x7f7f7f),
+  andesite: (t, r) => { grainy(t, rgb(0x898b89), r, 0.2, 5); speckle(t, rgb(0x74766f), r, 34, 0.9); cracks(t, r, 2, 16); },
+  granite: (t, r) => { grainy(t, rgb(0x9a6b5c), r, 0.22, 5); speckle(t, rgb(0xb08b7b), r, 40, 1.1); speckle(t, rgb(0x6f4a3c), r, 16, 0.85); },
+  diorite: (t, r) => { grainy(t, rgb(0xcfcfcf), r, 0.2, 5); speckle(t, rgb(0xa0a0a0), r, 40, 0.9); speckle(t, rgb(0xf0f0f0), r, 14, 1.05); },
+  cobblestone: (t, r) => { cellular(t, rgb(0x7d7d7d), r, 11, 1.1, 0.36); speckle(t, rgb(0x616161), r, 18, 0.9); },
+  mossy_cobblestone: (t, r) => { cellular(t, rgb(0x7d7d7d), r, 11, 1.1, 0.36); blotch(t, rgb(0x51702f), r, 0.54, 5, 0.2); },
+  stone_bricks: (t, r) => brickPattern(t, rgb(0x7b7b7b), rgb(0x5a5a5a), r, 16, 32),
+  bricks: (t, r) => brickPattern(t, rgb(0x9a5b48), rgb(0xb9ada6), r, 8, 16),
+  bedrock: (t, r) => { cellular(t, rgb(0x565656), r, 16, 0.9, 0.6); speckle(t, rgb(0x2a2a2a), r, 44, 0.7); },
+  obsidian: (t, r) => { grainy(t, rgb(0x14101f), r, 0.5, 4); speckle(t, rgb(0x4a3a72), r, 20, 1.4); cracks(t, r, 4, 18, 0.7); },
 
-  dirt: (t, r) => { grainy(t, rgb(0x866043), r, 0.3, 4); speckle(t, rgb(0x6b4a31), r, 18, 1); },
-  coarse_dirt: (t, r) => { grainy(t, rgb(0x77543a), r, 0.36, 4); speckle(t, rgb(0x5d4029), r, 26, 1); },
-  grass_top: (t, r) => { grainy(t, rgb(0xffffff), r, 0.24, 4); speckle(t, rgb(0xdadada), r, 18, 1); },
+  dirt: (t, r) => { grainy(t, rgb(0x866043), r, 0.3, 5); speckle(t, rgb(0x6b4a31), r, 40, 0.85); speckle(t, rgb(0x9a7550), r, 18, 1.1); },
+  coarse_dirt: (t, r) => { grainy(t, rgb(0x77543a), r, 0.36, 5); speckle(t, rgb(0x5d4029), r, 54, 0.8); },
+  grass_top: (t, r) => { grainy(t, rgb(0xffffff), r, 0.24, 5); speckle(t, rgb(0xdadada), r, 34, 0.94); },
   grass_side: (t, r) => {
-    grainy(t, rgb(0x866043), r, 0.3, 4);
-    const n = fbmTile(r, 3);
+    grainy(t, rgb(0x866043), r, 0.3, 5);
+    speckle(t, rgb(0x6b4a31), r, 30, 0.85);
+    // Frange d'herbe dentelée retombant sur la terre, sur un quart du bloc.
+    const n = tileNoise(10, r);
+    const fine = tileNoise(TILE, r);
     for (let x = 0; x < TILE; x++) {
-      const h = 3 + Math.round(n[x] * 3);
-      for (let y = 0; y < h; y++) t.set(x, y, rgb(0xffffff), 255, 0.82 + n[y * TILE + x] * 0.3);
+      const h = Math.round(2.2 * S + n[x] * 2.6 * S + (fine[x] > 0.7 ? S : 0));
+      for (let y = 0; y < h; y++) {
+        t.set(x, y, rgb(0xffffff), 255, 0.84 + fine[y * TILE + x] * 0.28);
+        t.setHeight(x, y, 0.75);
+      }
     }
   },
-  sand: (t, r) => { grainy(t, rgb(0xdcd0a0), r, 0.16, 4); speckle(t, rgb(0xc9bb87), r, 16, 1); },
-  red_sand: (t, r) => { grainy(t, rgb(0xbe6c31), r, 0.16, 4); speckle(t, rgb(0xa85a26), r, 16, 1); },
-  gravel: (t, r) => { cellular(t, rgb(0x847e7c), r, 12, 0.5, 0.55); speckle(t, rgb(0x5b5654), r, 16, 1); },
-  clay: (t, r) => grainy(t, rgb(0xa0a5b3), r, 0.14, 3),
-  snow: (t, r) => { grainy(t, rgb(0xf3f8f8), r, 0.08, 3); speckle(t, rgb(0xdfe9ef), r, 8, 1); },
+  sand: (t, r) => { grainy(t, rgb(0xdcd0a0), r, 0.14, 5); speckle(t, rgb(0xc9bb87), r, 40, 0.95); speckle(t, rgb(0xefe6c0), r, 18, 1.05); },
+  red_sand: (t, r) => { grainy(t, rgb(0xbe6c31), r, 0.16, 5); speckle(t, rgb(0xa85a26), r, 36, 0.95); },
+  gravel: (t, r) => { cellular(t, rgb(0x847e7c), r, 22, 0.8, 0.55); speckle(t, rgb(0x5b5654), r, 24, 0.85); },
+  clay: (t, r) => grainy(t, rgb(0xa0a5b3), r, 0.12, 4),
+  snow: (t, r) => { grainy(t, rgb(0xf3f8f8), r, 0.07, 4); speckle(t, rgb(0xffffff), r, 20, 1.03); },
 
   sandstone: (t, r) => {
-    grainy(t, rgb(0xd9cca3), r, 0.12, 3);
-    for (let x = 0; x < TILE; x++) { t.mul(x, 0, 0.82); t.mul(x, TILE - 1, 0.9); t.mul(x, 5, 0.93); t.mul(x, 11, 0.93); }
+    grainy(t, rgb(0xd9cca3), r, 0.12, 4);
+    // Strates sédimentaires.
+    for (const y of [0, 5, 11]) t.darkenRow16(y, y === 0 ? 0.8 : 0.92);
+    for (let x = 0; x < TILE; x++) {
+      for (const y of [0, 5, 11]) {
+        for (let k = 0; k < S; k++) t.setHeight(x, y * S + k, 0.25);
+      }
+    }
   },
-  sandstone_top: (t, r) => grainy(t, rgb(0xe0d3ac), r, 0.1, 4),
-  sandstone_bottom: (t, r) => grainy(t, rgb(0xc7b98f), r, 0.14, 4),
+  sandstone_top: (t, r) => grainy(t, rgb(0xe0d3ac), r, 0.1, 5),
+  sandstone_bottom: (t, r) => grainy(t, rgb(0xc7b98f), r, 0.14, 5),
 
   water: (t, r) => {
-    const n = fbmTile(r, 3);
+    const n = fbmTile(r, 4);
     for (let y = 0; y < TILE; y++)
-      for (let x = 0; x < TILE; x++) t.set(x, y, rgb(0x3a6fd8), 205, 0.85 + n[y * TILE + x] * 0.35);
+      for (let x = 0; x < TILE; x++) {
+        t.set(x, y, rgb(0x3a6fd8), 205, 0.85 + n[y * TILE + x] * 0.35);
+        t.setHeight(x, y, 0.5);
+      }
   },
   ice: (t, r) => {
-    const n = fbmTile(r, 3);
+    const n = fbmTile(r, 4);
     for (let y = 0; y < TILE; y++)
-      for (let x = 0; x < TILE; x++) t.set(x, y, rgb(0xa5cdf5), 190, 0.88 + n[y * TILE + x] * 0.28);
+      for (let x = 0; x < TILE; x++) {
+        t.set(x, y, rgb(0xa5cdf5), 190, 0.88 + n[y * TILE + x] * 0.28);
+        t.setHeight(x, y, 0.5);
+      }
+    cracks(t, r, 3, 16, 0.85);
   },
-  packed_ice: (t, r) => grainy(t, rgb(0x8fbdf0), r, 0.14, 3),
+  packed_ice: (t, r) => grainy(t, rgb(0x8fbdf0), r, 0.14, 4),
   lava: (t, r) => {
-    const n = fbmTile(r, 3);
+    const n = fbmTile(r, 4);
     for (let y = 0; y < TILE; y++)
       for (let x = 0; x < TILE; x++) {
         const v = n[y * TILE + x];
         t.set(x, y, v > 0.62 ? rgb(0xffd23a) : v > 0.42 ? rgb(0xef7215) : rgb(0xc63d05), 255, 0.9 + v * 0.3);
+        t.setHeight(x, y, 0.4 + v * 0.4);
       }
   },
 
   glass: (t, r) => {
     t.clear();
+    const b = Math.max(1, Math.round(S));
     for (let i = 0; i < TILE; i++) {
-      t.set(i, 0, rgb(0xd6f2ff), 190);
-      t.set(i, TILE - 1, rgb(0xd6f2ff), 190);
-      t.set(0, i, rgb(0xd6f2ff), 190);
-      t.set(TILE - 1, i, rgb(0xd6f2ff), 190);
+      for (let k = 0; k < b; k++) {
+        t.set(i, k, rgb(0xd6f2ff), 200);
+        t.set(i, TILE - 1 - k, rgb(0xd6f2ff), 200);
+        t.set(k, i, rgb(0xd6f2ff), 200);
+        t.set(TILE - 1 - k, i, rgb(0xd6f2ff), 200);
+      }
     }
-    for (let i = 0; i < 5; i++) {
-      const x = 2 + ((r() * 11) | 0);
-      const y = 2 + ((r() * 11) | 0);
-      t.set(x, y, rgb(0xffffff), 120);
-      t.set(x + 1, y + 1, rgb(0xffffff), 90);
+    // Reflets diagonaux.
+    for (let i = 0; i < 6; i++) {
+      const x = 3 + ((r() * (TILE - 8)) | 0);
+      const y = 3 + ((r() * (TILE - 8)) | 0);
+      for (let k = 0; k < 3; k++) t.set(x + k, y + k, rgb(0xffffff), 110 - k * 26);
     }
   },
 
-  oak_planks: (t, r) => stripes(t, rgb(0xb08a55), r, 4, false),
-  birch_planks: (t, r) => stripes(t, rgb(0xd7cb8d), r, 4, false),
-  spruce_planks: (t, r) => stripes(t, rgb(0x7a5b36), r, 4, false),
-  jungle_planks: (t, r) => stripes(t, rgb(0xb17f5f), r, 4, false),
-  oak_log: (t, r) => stripes(t, rgb(0x6b5231), r, 5, true),
-  birch_log: (t, r) => { stripes(t, rgb(0xd8d6cf), r, 6, true); speckle(t, rgb(0x33322c), r, 14, 1); },
-  spruce_log: (t, r) => stripes(t, rgb(0x4c3a22), r, 5, true),
-  jungle_log: (t, r) => stripes(t, rgb(0x584220), r, 5, true),
+  oak_planks: (t, r) => planks(t, rgb(0xb08a55), r, 8, false),
+  birch_planks: (t, r) => planks(t, rgb(0xd7cb8d), r, 8, false),
+  spruce_planks: (t, r) => planks(t, rgb(0x7a5b36), r, 8, false),
+  jungle_planks: (t, r) => planks(t, rgb(0xb17f5f), r, 8, false),
+  oak_log: (t, r) => planks(t, rgb(0x6b5231), r, 10, true),
+  birch_log: (t, r) => {
+    planks(t, rgb(0xd8d6cf), r, 12, true);
+    // Lenticelles caractéristiques du bouleau.
+    for (let i = 0; i < 6; i++) {
+      const x = (r() * (TILE - 6)) | 0, y = (r() * TILE) | 0;
+      const w = 3 + ((r() * 4) | 0);
+      for (let k = 0; k < w; k++) { t.set(x + k, y, rgb(0x33322c)); t.setHeight(x + k, y, 0.25); }
+    }
+  },
+  spruce_log: (t, r) => planks(t, rgb(0x4c3a22), r, 10, true),
+  jungle_log: (t, r) => planks(t, rgb(0x584220), r, 10, true),
   oak_log_top: (t, r) => ringPattern(t, rgb(0xa0813f), rgb(0x8a6b32), r),
   birch_log_top: (t, r) => ringPattern(t, rgb(0xd7cb8d), rgb(0xbcb078), r),
   spruce_log_top: (t, r) => ringPattern(t, rgb(0x7a5b36), rgb(0x62492b), r),
   jungle_log_top: (t, r) => ringPattern(t, rgb(0xb17f5f), rgb(0x94674a), r),
   bookshelf: (t, r) => {
-    stripes(t, rgb(0xb08a55), r, 8, false);
-    const colors = [rgb(0xa63b2c), rgb(0x3b6ea6), rgb(0xd0b64c), rgb(0x4a8a3f), rgb(0x8a4aa1)];
+    planks(t, rgb(0xb08a55), r, 16, false);
+    const colors = [rgb(0xa63b2c), rgb(0x3b6ea6), rgb(0xd0b64c), rgb(0x4a8a3f), rgb(0x8a4aa1), rgb(0x2f7a70)];
     for (const rowY of [2, 10]) {
       let x = 0;
-      while (x < TILE) {
+      while (x < 16) {
         const w = 1 + ((r() * 2) | 0);
         const c = colors[(r() * colors.length) | 0];
-        for (let dx = 0; dx < w && x + dx < TILE; dx++)
-          for (let dy = 0; dy < 5; dy++) t.set(x + dx, rowY + dy, c, 255, 0.8 + r() * 0.35);
+        for (let dx = 0; dx < w && x + dx < 16; dx++)
+          for (let dy = 0; dy < 5; dy++) {
+            t.px(x + dx, rowY + dy, c, 255, 0.8 + r() * 0.35);
+            t.pxHeight(x + dx, rowY + dy, 0.8);
+          }
         x += w + 1;
       }
     }
@@ -356,84 +583,107 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
   redstone_ore: (t, r) => oreTile(t, r, 0xd42a2a),
   lapis_ore: (t, r) => oreTile(t, r, 0x2452c4),
 
-  coal_block: (t, r) => { grainy(t, rgb(0x1a1a1a), r, 0.35, 4); speckle(t, rgb(0x3a3a3a), r, 14, 1); },
+  coal_block: (t, r) => { grainy(t, rgb(0x1a1a1a), r, 0.35, 5); speckle(t, rgb(0x3a3a3a), r, 26, 1.3); cracks(t, r, 3, 14, 0.6); },
   iron_block: (t, r) => metalTile(t, r, 0xd8d8d8),
   gold_block: (t, r) => metalTile(t, r, 0xf7d84c),
   diamond_block: (t, r) => metalTile(t, r, 0x62e8e0),
   emerald_block: (t, r) => metalTile(t, r, 0x3ddb6a),
-  lapis_block: (t, r) => { grainy(t, rgb(0x2a55c6), r, 0.28, 4); speckle(t, rgb(0x18378c), r, 18, 1); },
-  redstone_block: (t, r) => { grainy(t, rgb(0xb31d1d), r, 0.3, 4); speckle(t, rgb(0x7d1010), r, 20, 1); },
+  lapis_block: (t, r) => { grainy(t, rgb(0x2a55c6), r, 0.28, 5); speckle(t, rgb(0x18378c), r, 30, 0.85); speckle(t, rgb(0x5c86ea), r, 14, 1.15); },
+  redstone_block: (t, r) => { grainy(t, rgb(0xb31d1d), r, 0.3, 5); speckle(t, rgb(0x7d1010), r, 34, 0.85); },
 
-  glowstone: (t, r) => {
-    grainy(t, rgb(0xd6a441), r, 0.22, 3);
-    blotch(t, rgb(0xffe9a8), r, 0.58, 3, 0.2);
-  },
-  sea_lantern: (t, r) => { grainy(t, rgb(0xb9e3dc), r, 0.16, 3); blotch(t, rgb(0xeafffb), r, 0.55, 3); },
+  glowstone: (t, r) => { grainy(t, rgb(0xd6a441), r, 0.22, 4); blotch(t, rgb(0xffe9a8), r, 0.58, 4, 0.2); },
+  sea_lantern: (t, r) => { grainy(t, rgb(0xb9e3dc), r, 0.16, 4); blotch(t, rgb(0xeafffb), r, 0.55, 4); },
 
   crafting_top: (t, r) => {
-    stripes(t, rgb(0xb08a55), r, 4, false);
-    for (let i = 0; i < TILE; i++) { t.mul(i, 5, 0.6); t.mul(i, 10, 0.6); t.mul(5, i, 0.6); t.mul(10, i, 0.6); }
+    planks(t, rgb(0xb08a55), r, 8, false);
+    for (let i = 0; i < TILE; i++) {
+      for (const g of [5, 10]) {
+        for (let k = 0; k < S; k++) {
+          t.mul(i, g * S + k, 0.6);
+          t.mul(g * S + k, i, 0.6);
+          t.setHeight(i, g * S + k, 0.15);
+          t.setHeight(g * S + k, i, 0.15);
+        }
+      }
+    }
   },
   crafting_side: (t, r) => {
-    stripes(t, rgb(0x9c7a4a), r, 4, false);
-    for (let x = 3; x < 13; x++) { t.mul(x, 4, 0.65); t.mul(x, 11, 0.65); }
-    for (let y = 4; y < 12; y++) { t.mul(3, y, 0.65); t.mul(12, y, 0.65); }
+    planks(t, rgb(0x9c7a4a), r, 8, false);
+    for (let x = 3; x < 13; x++) { t.px(x, 4, rgb(0x6a5030), 255); t.px(x, 11, rgb(0x6a5030), 255); }
+    for (let y = 4; y < 12; y++) { t.px(3, y, rgb(0x6a5030), 255); t.px(12, y, rgb(0x6a5030), 255); }
   },
-  furnace_top: (t, r) => { cellular(t, rgb(0x707070), r, 6, 0.6, 0.25); },
+  furnace_top: (t, r) => cellular(t, rgb(0x707070), r, 9, 0.9, 0.25),
   furnace_front: (t, r) => {
-    cellular(t, rgb(0x707070), r, 6, 0.6, 0.25);
-    for (let y = 6; y < 13; y++) for (let x = 4; x < 12; x++) t.set(x, y, rgb(0x2a2a2a), 255, 0.9 + r() * 0.2);
-    for (let x = 5; x < 11; x++) t.set(x, 12, rgb(0x5a5a5a), 255);
+    cellular(t, rgb(0x707070), r, 9, 0.9, 0.25);
+    for (let y = 6; y < 13; y++)
+      for (let x = 4; x < 12; x++) { t.px(x, y, rgb(0x2a2a2a), 255, 0.9 + r() * 0.2); t.pxHeight(x, y, 0.1); }
+    for (let x = 5; x < 11; x++) t.px(x, 12, rgb(0x5a5a5a), 255);
   },
-  chest_top: (t, r) => stripes(t, rgb(0x9a6a34), r, 5, false),
+  chest_top: (t, r) => planks(t, rgb(0x9a6a34), r, 10, false),
   chest_side: (t, r) => {
-    stripes(t, rgb(0x8a5c2c), r, 6, false);
-    for (let x = 0; x < TILE; x++) t.mul(x, 6, 0.55);
-    for (let y = 4; y < 9; y++) { t.set(7, y, rgb(0x3a3128)); t.set(8, y, rgb(0x2a2a2a)); }
+    planks(t, rgb(0x8a5c2c), r, 12, false);
+    for (let x = 0; x < 16; x++) { t.px(x, 6, rgb(0x4a3118), 255); t.pxHeight(x, 6, 0.12); }
+    for (let y = 4; y < 9; y++) { t.px(7, y, rgb(0x3a3128)); t.px(8, y, rgb(0x2a2a2a)); }
+    t.px(7, 6, rgb(0xd8c264));
+    t.px(8, 6, rgb(0xb89a44));
   },
-  tnt_top: (t, r) => { grainy(t, rgb(0xb03b2c), r, 0.18, 3); for (let i = 0; i < TILE; i++) t.mul(i, 0, 0.7); },
-  tnt_bottom: (t, r) => grainy(t, rgb(0x6b4a35), r, 0.18, 3),
+  tnt_top: (t, r) => { grainy(t, rgb(0xb03b2c), r, 0.18, 4); t.darkenRow16(0, 0.7); },
+  tnt_bottom: (t, r) => grainy(t, rgb(0x6b4a35), r, 0.18, 4),
   tnt_side: (t, r) => {
-    grainy(t, rgb(0xb03b2c), r, 0.18, 3);
-    for (let y = 5; y < 11; y++) for (let x = 0; x < TILE; x++) t.set(x, y, rgb(0xf0f0f0), 255, 0.9 + r() * 0.2);
-    for (let x = 2; x < 14; x++) { t.set(x, 7, rgb(0x1a1a1a)); t.set(x, 8, rgb(0x1a1a1a)); }
+    grainy(t, rgb(0xb03b2c), r, 0.18, 4);
+    for (let y = 5; y < 11; y++) for (let x = 0; x < 16; x++) t.px(x, y, rgb(0xf0f0f0), 255, 0.9 + r() * 0.2);
+    for (let x = 2; x < 14; x++) { t.px(x, 7, rgb(0x1a1a1a)); t.px(x, 8, rgb(0x1a1a1a)); }
   },
-  pumpkin_top: (t, r) => { grainy(t, rgb(0xc47418), r, 0.2, 3); for (let i = 0; i < 4; i++) t.set(7 + (i % 2), 7 + ((i / 2) | 0), rgb(0x6f5a22)); },
+  pumpkin_top: (t, r) => {
+    grainy(t, rgb(0xc47418), r, 0.2, 4);
+    for (let i = 0; i < 4; i++) t.px(7 + (i % 2), 7 + ((i / 2) | 0), rgb(0x6f5a22));
+  },
   pumpkin_side: (t, r) => {
-    grainy(t, rgb(0xd2801c), r, 0.16, 3);
-    for (let x = 0; x < TILE; x += 4) for (let y = 0; y < TILE; y++) t.mul(x, y, 0.78);
+    grainy(t, rgb(0xd2801c), r, 0.16, 4);
+    // Côtes verticales.
+    for (let x = 0; x < TILE; x += 4 * S)
+      for (let y = 0; y < TILE; y++) { t.mul(x, y, 0.76); t.setHeight(x, y, 0.2); }
   },
   jack_o_lantern: (t, r) => {
-    grainy(t, rgb(0xd2801c), r, 0.16, 3);
-    for (let x = 0; x < TILE; x += 4) for (let y = 0; y < TILE; y++) t.mul(x, y, 0.78);
-    const face = [
+    grainy(t, rgb(0xd2801c), r, 0.16, 4);
+    for (let x = 0; x < TILE; x += 4 * S) for (let y = 0; y < TILE; y++) t.mul(x, y, 0.76);
+    const face: [number, number][] = [
       [4, 5], [5, 5], [4, 6], [10, 5], [11, 5], [11, 6],
       [4, 10], [5, 11], [6, 11], [7, 10], [8, 11], [9, 11], [10, 10], [11, 10],
     ];
-    for (const [x, y] of face) t.set(x, y, rgb(0xffe27a));
+    for (const [x, y] of face) t.px(x, y, rgb(0xffe27a));
   },
-  melon_top: (t, r) => grainy(t, rgb(0x6f9b32), r, 0.2, 3),
+  melon_top: (t, r) => grainy(t, rgb(0x6f9b32), r, 0.2, 4),
   melon_side: (t, r) => {
-    grainy(t, rgb(0x6f9b32), r, 0.22, 3);
-    const n = fbmTile(r, 3);
+    grainy(t, rgb(0x6f9b32), r, 0.22, 4);
+    const n = fbmTile(r, 4);
     for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) if (n[y * TILE + x] > 0.6) t.set(x, y, rgb(0x9bc255), 255, 0.9);
   },
 
-  cactus_top: (t, r) => { grainy(t, rgb(0x577d2e), r, 0.16, 3); speckle(t, rgb(0xd8e3b0), r, 6, 1); },
-  cactus_bottom: (t, r) => grainy(t, rgb(0x6b5a3a), r, 0.16, 3),
+  cactus_top: (t, r) => { grainy(t, rgb(0x577d2e), r, 0.16, 4); speckle(t, rgb(0xd8e3b0), r, 10, 1.2); },
+  cactus_bottom: (t, r) => grainy(t, rgb(0x6b5a3a), r, 0.16, 4),
   cactus_side: (t, r) => {
-    grainy(t, rgb(0x4f7a2a), r, 0.14, 3);
-    for (let y = 0; y < TILE; y++) { t.mul(0, y, 0.7); t.mul(TILE - 1, y, 0.7); }
-    for (let y = 1; y < TILE; y += 4) { t.set(4, y, rgb(0xdfe8c0), 255); t.set(11, y + 2, rgb(0xdfe8c0), 255); }
+    grainy(t, rgb(0x4f7a2a), r, 0.14, 4);
+    for (let y = 0; y < TILE; y++) for (let k = 0; k < S; k++) { t.mul(k, y, 0.68); t.mul(TILE - 1 - k, y, 0.68); }
+    for (let y = 1; y < 16; y += 4) { t.px(4, y, rgb(0xdfe8c0), 255); t.px(11, y + 2, rgb(0xdfe8c0), 255); }
   },
 
-  wool: (t, r) => { grainy(t, rgb(0xffffff), r, 0.14, 4); speckle(t, rgb(0xe8e8e8), r, 20, 1); },
+  wool: (t, r) => {
+    grainy(t, rgb(0xffffff), r, 0.12, 5);
+    // Trame tissée : deux directions alternées.
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const weave = ((x >> 1) + (y >> 1)) % 2 === 0 ? 1.03 : 0.95;
+        t.mul(x, y, weave);
+        t.setHeight(x, y, weave > 1 ? 0.62 : 0.42);
+      }
+  },
 
-  tall_grass: (t, r) => plant(t, rgb(0xffffff), r, 7, 13),
-  fern: (t, r) => plant(t, rgb(0xffffff), r, 5, 11),
-  wheat: (t, r) => plant(t, rgb(0xd8c25a), r, 6, 13),
-  sugar_cane: (t, r) => plant(t, rgb(0xffffff), r, 4, 16),
-  dead_bush: (t, r) => plant(t, rgb(0x8a6b33), r, 6, 10),
+  tall_grass: (t, r) => plant(t, rgb(0xffffff), r, 9, 13),
+  fern: (t, r) => plant(t, rgb(0xffffff), r, 7, 11),
+  wheat: (t, r) => plant(t, rgb(0xd8c25a), r, 8, 13),
+  sugar_cane: (t, r) => plant(t, rgb(0xffffff), r, 5, 16),
+  dead_bush: (t, r) => plant(t, rgb(0x8a6b33), r, 8, 10),
   dandelion: (t, r) => flower(t, rgb(0x4c8a32), rgb(0xf4d63b), rgb(0xfff3a0), r),
   poppy: (t, r) => flower(t, rgb(0x4c8a32), rgb(0xd23b2c), rgb(0x2a2a2a), r),
   blue_orchid: (t, r) => flower(t, rgb(0x4c8a32), rgb(0x2fa9e0), rgb(0xf0f8ff), r),
@@ -445,63 +695,73 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
   jungle_sapling: (t, r) => sapling(t, r),
   torch: (t, r) => {
     t.clear();
-    for (let y = 6; y < TILE; y++) { t.set(7, y, rgb(0x8a6a3a), 255, 0.85 + r() * 0.25); t.set(8, y, rgb(0x6d5129), 255); }
-    t.set(7, 5, rgb(0xffe08a));
-    t.set(8, 5, rgb(0xffc84a));
-    t.set(7, 4, rgb(0xfff3c4));
-    t.set(8, 4, rgb(0xffe08a));
+    for (let y = 6; y < 16; y++) {
+      t.px(7, y, rgb(0x8a6a3a), 255, 0.85 + r() * 0.25);
+      t.px(8, y, rgb(0x6d5129), 255);
+    }
+    t.px(6, 5, rgb(0xd8721a));
+    t.px(9, 5, rgb(0xd8721a));
+    t.px(7, 5, rgb(0xffc84a));
+    t.px(8, 5, rgb(0xffb020));
+    t.px(7, 4, rgb(0xfff3c4));
+    t.px(8, 4, rgb(0xffe08a));
+    t.px(7, 3, rgb(0xfffbe6));
   },
 };
 
-function leaves(t: Tile, r: () => number, base: number): void {
-  const n = fbmTile(r, 3);
+// ---------------------------------------------------------------------------
+// Propriétés de surface
+// ---------------------------------------------------------------------------
+
+/** Amplitude du relief et rugosité, déduites du nom de la texture. */
+function surfaceOf(name: string): { relief: number; roughness: number } {
+  if (name === 'water') return { relief: 0.15, roughness: 0.05 };
+  if (name === 'ice' || name === 'packed_ice') return { relief: 0.25, roughness: 0.12 };
+  if (name === 'glass') return { relief: 0, roughness: 0.08 };
+  if (name.endsWith('_leaves') || name === 'air') return { relief: 0.35, roughness: 0.9 };
+  if (name === 'iron_block' || name === 'gold_block' || name === 'diamond_block' || name === 'emerald_block') {
+    return { relief: 0.5, roughness: 0.22 };
+  }
+  if (name === 'wool') return { relief: 0.6, roughness: 1 };
+  if (name === 'lava' || name === 'glowstone' || name === 'sea_lantern') return { relief: 0.4, roughness: 0.75 };
+  if (name.endsWith('_ore')) return { relief: 1.3, roughness: 0.45 };
+  if (name === 'cobblestone' || name === 'mossy_cobblestone' || name === 'gravel') return { relief: 1.5, roughness: 0.95 };
+  if (name === 'bricks' || name === 'stone_bricks') return { relief: 1.2, roughness: 0.9 };
+  if (name.includes('planks') || name.includes('_log')) return { relief: 0.9, roughness: 0.85 };
+  if (name === 'sand' || name === 'red_sand' || name === 'snow') return { relief: 0.5, roughness: 1 };
+  return { relief: 1, roughness: 0.88 };
+}
+
+/** Sobel bouclant sur le champ de hauteur → normale tangente encodée. */
+function buildNormal(height: Float32Array, relief: number, roughness: number, out: Uint8Array, offset: number): void {
+  const at = (x: number, y: number) => height[(((y % TILE) + TILE) % TILE) * TILE + (((x % TILE) + TILE) % TILE)];
   for (let y = 0; y < TILE; y++) {
     for (let x = 0; x < TILE; x++) {
-      const v = n[y * TILE + x];
-      if (v < 0.30) t.set(x, y, rgb(base), 0);
-      else t.set(x, y, rgb(base), 255, 0.62 + v * 0.62);
+      const dx =
+        (at(x + 1, y - 1) + 2 * at(x + 1, y) + at(x + 1, y + 1)) -
+        (at(x - 1, y - 1) + 2 * at(x - 1, y) + at(x - 1, y + 1));
+      const dy =
+        (at(x - 1, y + 1) + 2 * at(x, y + 1) + at(x + 1, y + 1)) -
+        (at(x - 1, y - 1) + 2 * at(x, y - 1) + at(x + 1, y - 1));
+      let nx = -dx * relief;
+      let ny = -dy * relief;
+      const nz = 1;
+      const len = Math.hypot(nx, ny, nz) || 1;
+      nx /= len;
+      ny /= len;
+      const i = offset + (y * TILE + x) * 4;
+      out[i] = clamp255((nx * 0.5 + 0.5) * 255);
+      out[i + 1] = clamp255((ny * 0.5 + 0.5) * 255);
+      out[i + 2] = clamp255((nz / len * 0.5 + 0.5) * 255);
+      out[i + 3] = clamp255(roughness * 255);
     }
   }
-}
-
-function oreTile(t: Tile, r: () => number, ore: number): void {
-  grainy(t, rgb(0x7f7f7f), r, 0.26, 4);
-  const n = tileNoise(4, r);
-  for (let y = 0; y < TILE; y++)
-    for (let x = 0; x < TILE; x++) {
-      const v = n[y * TILE + x];
-      if (v > 0.68) t.set(x, y, rgb(ore), 255, 0.85 + v * 0.35);
-      else if (v > 0.62) t.set(x, y, rgb(ore), 255, 0.6);
-    }
-}
-
-function metalTile(t: Tile, r: () => number, base: number): void {
-  grainy(t, rgb(base), r, 0.1, 3);
-  for (let i = 0; i < TILE; i++) { t.mul(i, 0, 1.12); t.mul(0, i, 1.1); t.mul(i, TILE - 1, 0.85); t.mul(TILE - 1, i, 0.88); }
-}
-
-function mushroom(t: Tile, r: () => number, cap: number, spot: number): void {
-  t.clear();
-  for (let y = 9; y < TILE; y++) { t.set(7, y, rgb(0xe0d8c0), 255, 0.85 + r() * 0.2); t.set(8, y, rgb(0xc8bfa4), 255); }
-  for (let y = 4; y < 10; y++) {
-    const w = y < 6 ? 3 : y < 8 ? 5 : 4;
-    for (let x = 8 - w; x <= 7 + w; x++) {
-      if (x < 0 || x >= TILE) continue;
-      t.set(x, y, rgb(cap), 255, 0.85 + r() * 0.3);
-    }
-  }
-  for (let i = 0; i < 4; i++) t.set(4 + ((r() * 8) | 0), 5 + ((r() * 4) | 0), rgb(spot), 255);
-}
-
-function sapling(t: Tile, r: () => number): void {
-  t.clear();
-  for (let y = 10; y < TILE; y++) t.set(7, y, rgb(0x6b4a2a), 255, 0.9);
-  const pts: [number, number][] = [[7, 4], [6, 5], [8, 5], [5, 6], [7, 6], [9, 6], [6, 7], [8, 7], [7, 8], [5, 8], [9, 8], [7, 9]];
-  for (const [x, y] of pts) t.set(x, y, rgb(0xffffff), 255, 0.75 + r() * 0.4);
 }
 
 export interface Atlas {
   texture: DataArrayTexture;
+  /** RVB = normale tangente, A = rugosité. */
+  normalTexture: DataArrayTexture;
   layerCount: number;
   /** Aperçu RGBA d'une tuile, pour les icônes d'inventaire. */
   tileData(layer: number): Uint8Array;
@@ -512,6 +772,7 @@ export interface Atlas {
 export function buildAtlas(): Atlas {
   const count = TEXTURE_NAMES.length;
   const data = new Uint8Array(STRIDE * count);
+  const normals = new Uint8Array(STRIDE * count);
   const previews: Uint8Array[] = [];
 
   for (let i = 0; i < count; i++) {
@@ -522,7 +783,11 @@ export function buildAtlas(): Atlas {
     let h = 2166136261;
     for (let k = 0; k < name.length; k++) h = Math.imul(h ^ name.charCodeAt(k), 16777619);
     painter(t, mulberry32(h >>> 0));
+    t.finalizeHeight();
+
+    const { relief, roughness } = surfaceOf(name);
     data.set(t.data, i * STRIDE);
+    buildNormal(t.height, relief, roughness, normals, i * STRIDE);
     previews.push(t.data);
   }
 
@@ -539,6 +804,18 @@ export function buildAtlas(): Atlas {
   texture.anisotropy = 16;
   texture.needsUpdate = true;
 
+  // La carte de normales reste en espace linéaire : ce ne sont pas des couleurs.
+  const normalTexture = new DataArrayTexture(normals, TILE, TILE, count);
+  normalTexture.format = RGBAFormat;
+  normalTexture.type = UnsignedByteType;
+  normalTexture.magFilter = NearestFilter;
+  normalTexture.minFilter = LinearMipmapLinearFilter;
+  normalTexture.wrapS = RepeatWrapping;
+  normalTexture.wrapT = RepeatWrapping;
+  normalTexture.generateMipmaps = true;
+  normalTexture.anisotropy = 8;
+  normalTexture.needsUpdate = true;
+
   const averages = previews.map((d) => {
     let r = 0, g = 0, b = 0, n = 0;
     for (let i = 0; i < d.length; i += 4) {
@@ -554,6 +831,7 @@ export function buildAtlas(): Atlas {
 
   return {
     texture,
+    normalTexture,
     layerCount: count,
     tileData: (layer: number) => previews[layer] ?? previews[0],
     tileAverage: (layer: number) => averages[layer] ?? 0x808080,

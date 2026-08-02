@@ -42,7 +42,7 @@ import { Inventory } from '../items/Inventory';
 import { ITEM_BY_KEY, SMELTING, blockDrops, breakInfo, type ItemDef } from '../items/items';
 import { GameMode, Player } from '../player/Player';
 import { raycast, type RaycastHit } from '../player/physics';
-import { buildAtlas, type Atlas } from '../render/atlas';
+import { TILE, buildAtlas, type Atlas } from '../render/atlas';
 import { ChunkManager } from '../render/ChunkManager';
 import { createEnvUniforms, type EnvUniforms } from '../render/env';
 import { createEntityMaterial } from '../render/entityMaterial';
@@ -207,6 +207,33 @@ export class Game {
     window.addEventListener('beforeunload', () => void this.persist(true));
   }
 
+  /**
+   * Planche de contact de toutes les tuiles de l'atlas, en data-URL.
+   * Sert à inspecter les textures depuis la console sans lancer d'outil.
+   */
+  debugAtlasPreview(scale = 3): string {
+    const n = this.atlas.layerCount;
+    const cols = 12;
+    const rows = Math.ceil(n / cols);
+    const size = TILE * scale;
+    const canvas = document.createElement('canvas');
+    canvas.width = cols * size;
+    canvas.height = rows * size;
+    const ctx = canvas.getContext('2d')!;
+    ctx.imageSmoothingEnabled = false;
+    const tmp = document.createElement('canvas');
+    tmp.width = TILE;
+    tmp.height = TILE;
+    const tctx = tmp.getContext('2d')!;
+    for (let i = 0; i < n; i++) {
+      const img = tctx.createImageData(TILE, TILE);
+      img.data.set(this.atlas.tileData(i));
+      tctx.putImageData(img, 0, 0);
+      ctx.drawImage(tmp, (i % cols) * size, Math.floor(i / cols) * size, size, size);
+    }
+    return canvas.toDataURL();
+  }
+
   /** Instantané d'état, utile en console et pour les tests automatisés. */
   debugSnapshot(): Record<string, unknown> {
     return {
@@ -300,9 +327,9 @@ export class Game {
     this.scene.add(this.particles.mesh);
 
     const materials = {
-      opaque: createTerrainMaterial('opaque', this.atlas.texture, this.env),
-      cutout: createTerrainMaterial('cutout', this.atlas.texture, this.env),
-      water: createTerrainMaterial('water', this.atlas.texture, this.env),
+      opaque: createTerrainMaterial('opaque', this.atlas.texture, this.atlas.normalTexture, this.env),
+      cutout: createTerrainMaterial('cutout', this.atlas.texture, this.atlas.normalTexture, this.env),
+      water: createTerrainMaterial('water', this.atlas.texture, this.atlas.normalTexture, this.env),
     };
     this.shadowMaterial = createShadowMaterial(this.atlas.texture, this.env);
     this.chunks = new ChunkManager(this.world, this.pool, materials, this.save);
@@ -1438,7 +1465,7 @@ export class Game {
   private buildHeldMesh(item: ItemDef): Mesh {
     if (item.block) {
       const geo = buildBlockCubeGeometry(item.block);
-      const mat = createTerrainMaterial('cutout', this.atlas.texture, this.env);
+      const mat = createTerrainMaterial('cutout', this.atlas.texture, this.atlas.normalTexture, this.env);
       mat.depthTest = true;
       const m = new Mesh(geo, mat);
       m.scale.setScalar(0.24);
