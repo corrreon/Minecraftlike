@@ -16,6 +16,9 @@ export interface TouchHandlers {
   onAttack(down: boolean): void;
   onUse(down: boolean): void;
   onInventory(): void;
+  /** Sélection d'une case de la barre rapide : sans molette ni pavé numérique,
+   *  c'est le seul moyen de changer d'objet sur mobile. */
+  onSelectSlot(index: number): void;
 }
 
 export class Hud {
@@ -33,6 +36,7 @@ export class Hud {
   private lastVersion = -1;
   private lastSelected = -1;
   private heldTimer = 0;
+  private touchReady = false;
 
   constructor() {
     this.root = document.getElementById('hud')!;
@@ -150,9 +154,23 @@ export class Hud {
   // --- Contrôles tactiles -------------------------------------------------
 
   enableTouch(handlers: TouchHandlers): void {
+    if (this.touchReady) return;
+    this.touchReady = true;
     this.touchLayer.classList.add('on');
     this.touchLayer.innerHTML = '';
     el('div', 'stick-base', this.touchLayer);
+
+    // La couche HUD ignore les pointeurs ; on les réactive sur la seule barre
+    // rapide, qui devient touchable.
+    this.hotbarEl.classList.add('tappable');
+    for (let i = 0; i < this.slots.length; i++) {
+      const slot = this.slots[i];
+      slot.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        handlers.onSelectSlot(i);
+      });
+    }
 
     const mk = (cls: string, label: string, down: (v: boolean) => void, tap?: () => void) => {
       const b = el('div', `touch-btn ${cls}`, this.touchLayer);

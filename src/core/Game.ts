@@ -137,6 +137,13 @@ export class Game {
   private playerModel: Group;
   private spawnPoint = new Vector3(0, 80, 0);
   private worldReady = false;
+  /**
+   * Faux tant que `startWorld` n'a pas fini de construire monde, pool et
+   * gestionnaire de chunks. Sans ce garde, une image rendue pendant l'un des
+   * `await` de la création trouvait `save` déjà assigné mais `chunks` encore
+   * indéfini, et levait une exception.
+   */
+  private sessionReady = false;
   private consoleEl!: HTMLElement;
   private consoleLog!: HTMLElement;
   private consoleInput!: HTMLInputElement;
@@ -317,6 +324,7 @@ export class Game {
 
   private async startWorld(meta: WorldMeta, isNew = false): Promise<void> {
     this.teardownWorld();
+    this.sessionReady = false;
     this.screens.show('none');
     this.setLoading(true, 'Génération du monde…');
 
@@ -359,6 +367,7 @@ export class Game {
 
     this.chunks.setCenter(this.player.position.x, this.player.position.z);
     this.worldReady = false;
+    this.sessionReady = true;
     this.paused = false;
     this.hud.show(true);
     this.hud.updateHotbar(this.inventory, true);
@@ -390,6 +399,7 @@ export class Game {
   }
 
   private teardownWorld(): void {
+    this.sessionReady = false;
     if (this.chunks) {
       this.chunks.dispose();
       this.scene.remove(this.chunks.group);
@@ -887,7 +897,7 @@ export class Game {
     const avg = this.frameTimes.reduce((a, b) => a + b, 0) / this.frameTimes.length;
     this.fps = 1 / Math.max(avg, 1e-4);
 
-    if (this.save) this.update(dt);
+    if (this.sessionReady) this.update(dt);
     this.render();
     this.input.endFrame();
   };
@@ -990,6 +1000,11 @@ export class Game {
       onAttack: (v: boolean) => this.input.setVirtual('attack', v),
       onUse: (v: boolean) => this.input.setVirtual('use', v),
       onInventory: () => this.openInventory('inventory'),
+      onSelectSlot: (i: number) => {
+        this.inventory.selected = i;
+        this.hud.updateHotbar(this.inventory, true);
+        this.audio.click();
+      },
     };
   }
 
@@ -1841,7 +1856,7 @@ export class Game {
 
   private render(): void {
     if (!this.post) return;
-    if (this.save && this.worldReady) {
+    if (this.sessionReady && this.worldReady) {
       this.renderShadowPass();
       this.renderer.setRenderTarget(this.post.renderTarget);
       this.renderer.clear();

@@ -125,8 +125,10 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Options** : distance de rendu, FOV, échelle de résolution et d'interface,
   bloom, rayons crépusculaires, FXAA, nuages, météo, particules, oscillation de
   caméra, sensibilité, volumes, nombre de créatures.
-- **Contrôles tactiles** détectés automatiquement (joystick virtuel, zone de
-  visée, boutons d'action).
+- **Contrôles tactiles** détectés automatiquement : joystick virtuel, zone de
+  visée, boutons d'action, et **barre rapide touchable** — sans molette ni pavé
+  numérique, c'est le seul moyen de changer d'objet sur mobile. Les cases
+  rétrécissent pour tenir dans la largeur des écrans étroits.
 
 ---
 

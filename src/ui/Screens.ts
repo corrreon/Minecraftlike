@@ -387,7 +387,9 @@ export class Screens {
       el('img', undefined, result);
       el('span', 'count', result);
       this.resultSlot = result;
-      result.addEventListener('mousedown', (e) => {
+      // `pointerdown` couvre souris, tactile et stylet : sur mobile les
+      // événements souris émulés n'arrivent pas de façon fiable.
+      result.addEventListener('pointerdown', (e) => {
         e.preventDefault();
         this.takeCraftResult(e.shiftKey);
       });
@@ -466,7 +468,7 @@ export class Screens {
         el('span', 'count', slot);
         renderSlot(slot, { item: def, count: 1, damage: 0 });
         slot.title = def.name;
-        slot.addEventListener('mousedown', (e) => {
+        slot.addEventListener('pointerdown', (e) => {
           e.preventDefault();
           const inv = this.ctx.inventory;
           inv.held = { item: def, count: e.button === 2 ? 1 : def.maxStack, damage: 0 };
@@ -611,7 +613,7 @@ export class Screens {
     this.bindings.push(binding);
 
     e.addEventListener('contextmenu', (ev) => ev.preventDefault());
-    e.addEventListener('mousedown', (ev) => {
+    e.addEventListener('pointerdown', (ev) => {
       ev.preventDefault();
       if (ev.shiftKey && ev.button === 0) this.quickMove(container, index);
       else if (ev.button === 0) this.leftClick(container, index);

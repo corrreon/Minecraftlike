@@ -252,6 +252,32 @@ img {
   place-items: center;
 }
 
+/* Sur mobile, la barre rapide doit recevoir les pointeurs : la couche HUD les
+   ignore entièrement par défaut. */
+#hotbar.tappable {
+  pointer-events: auto;
+}
+
+#hotbar.tappable .slot {
+  cursor: pointer;
+}
+
+/* Neuf cases, huit espaces, la marge et les bordures doivent tenir dans la
+   largeur de l'écran : sur un téléphone étroit, les cases rétrécissent. */
+#hotbar .slot {
+  width: min(48px, calc((100vw - 46px) / 9));
+  height: min(48px, calc((100vw - 46px) / 9));
+}
+
+#hotbar .slot img {
+  width: 72%;
+  height: 72%;
+}
+
+#hotbar .slot .count {
+  font-size: min(12px, 3vw);
+}
+
 #hotbar .slot.active {
   outline: 3px solid #f3f6ff;
   outline-offset: -1px;
