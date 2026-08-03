@@ -45,11 +45,11 @@ export class WorkerPool {
   private nextJob = 1;
   private busyCount = 0;
 
-  constructor(seed: number, size = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1))) {
+  constructor(seed: number, flat = false, size = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1))) {
     for (let i = 0; i < size; i++) {
       const w = new Worker(new URL('../workers/chunk.worker.ts', import.meta.url), { type: 'module' });
       w.onmessage = (ev: MessageEvent<Response>) => this.onMessage(w, ev.data);
-      w.postMessage({ type: 'init', seed });
+      w.postMessage({ type: 'init', seed, flat });
       this.workers.push(w);
       this.idle.push(w);
     }

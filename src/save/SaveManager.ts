@@ -25,6 +25,8 @@ export interface WorldMeta {
   /** Temps de jeu cumulé en secondes. */
   playtime: number;
   dayTime: number;
+  /** Monde superplat, choisi à la création. */
+  flat?: boolean;
 }
 
 export interface PlayerSave {

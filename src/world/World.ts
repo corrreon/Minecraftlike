@@ -279,6 +279,37 @@ export class World {
     return true;
   }
 
+  /**
+   * Écriture brute, sans mise à jour de lumière : réservée aux opérations en
+   * masse, où relancer la propagation à chaque bloc coûterait des minutes.
+   * Appeler `relight` sur les chunks touchés une fois l'opération terminée.
+   */
+  setBlockRaw(x: number, y: number, z: number, id: number): boolean {
+    if (y < 0 || y >= WORLD_HEIGHT) return false;
+    const c = this.getChunk(floorDiv(x, CHUNK_X), floorDiv(z, CHUNK_Z));
+    if (!c || c.state !== ChunkState.Ready) return false;
+    const lx = mod(x, CHUNK_X);
+    const lz = mod(z, CHUNK_Z);
+    const idx = voxelIndex(lx, y, lz);
+    if (c.blocks[idx] === id) return false;
+    c.blocks[idx] = id;
+    c.recordEdit(idx, id);
+    return true;
+  }
+
+  /** Recalcule entièrement l'éclairage d'un chunk et réveille ses voisins. */
+  relight(cx: number, cz: number): void {
+    const c = this.getChunk(cx, cz);
+    if (!c || c.state !== ChunkState.Ready) return;
+    c.recomputeHeights();
+    this.initChunkLight(c);
+    c.rev++;
+    this.dirty.add(c.key);
+    for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]] as const) {
+      this.markDirty(cx + dx, cz + dz);
+    }
+  }
+
   // --- Initialisation de la lumière d'un chunk ---------------------------
 
   /** Remplit la lumière du ciel verticalement puis amorce la diffusion. */

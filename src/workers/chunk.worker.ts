@@ -7,7 +7,7 @@
 import { TerrainGenerator } from '../world/generator';
 import { meshChunk } from '../world/mesher';
 
-export interface InitMsg { type: 'init'; seed: number }
+export interface InitMsg { type: 'init'; seed: number; flat?: boolean }
 export interface GenMsg { type: 'gen'; job: number; cx: number; cz: number }
 export interface MeshMsg { type: 'mesh'; job: number; cx: number; cz: number; rev: number; blocks: ArrayBuffer; light: ArrayBuffer }
 export type WorkerRequest = InitMsg | GenMsg | MeshMsg;
@@ -18,7 +18,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
   switch (msg.type) {
     case 'init':
-      gen = new TerrainGenerator(msg.seed);
+      gen = new TerrainGenerator(msg.seed, msg.flat === true);
       (self as DedicatedWorkerGlobalScope).postMessage({ type: 'ready' });
       break;
 

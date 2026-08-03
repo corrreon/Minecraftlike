@@ -37,9 +37,12 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   grand sapin, acajou, acacia, chêne de marais), cactus, cannes à sucre,
   fleurs, fougères, champignons, citrouilles. Les structures qui débordent d'un
   chunk sont reportées sur les chunks voisins.
-- **~95 blocs** : roches et variantes, minerais, quatre essences de bois,
-  verre, glace, 15 couleurs de laine, blocs décoratifs, établi, four, coffre,
-  TNT, sources de lumière…
+- **~175 blocs** : roches et variantes polies, minerais, quatre essences de
+  bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
+  lumière, et une palette de construction complète — laine, **béton**, **terre
+  cuite** et **verre teinté** dans les 16 teintes, plus **10 familles de
+  dalles**.
+- **Monde superplat** proposé à la création, pour bâtir sans terrain qui gêne.
 
 ### Rendu
 
@@ -106,6 +109,15 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Sauvegarde IndexedDB** : plusieurs mondes, seuls les blocs modifiés sont
   stockés (le terrain est reproductible depuis la graine), position, inventaire,
   armure, heure et temps de jeu ; sauvegarde automatique.
+- **Outils de construction** (console) : `/pos1` et `/pos2` marquent une zone
+  depuis le bloc visé, puis `/remplir`, `/coque`, `/remplacer`, `/copier`,
+  `/coller` et `/annuler`. Les opérations en masse écrivent les blocs
+  directement et ne recalculent la lumière qu'une fois par chunk touché — une
+  zone de 160 000 blocs se remplit d'un coup.
+- **Sélecteur créatif par onglets** : Construction, Couleurs, Nature,
+  Mécanismes, Équipement, Ressources, Nourriture, avec recherche transversale.
+- **Règles du monde** : `/figer` bloque le cycle jour/nuit, `/mobs off` coupe
+  l'apparition des créatures.
 - **Console de commandes** : `/gamemode`, `/tp`, `/time`, `/give`, `/meteo`,
   `/seed`, `/tuer`, `/aide`.
 - **Audio 100 % procédural** (Web Audio) : impacts filtrés par matériau, pas,
@@ -129,6 +141,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 | Clic gauche | Casser un bloc / attaquer |
 | Clic droit | Poser un bloc / utiliser / ouvrir un conteneur |
 | Molette, `1`-`9` | Changer d'objet |
+| Clic milieu | Prendre le bloc visé dans la barre rapide |
 | `E` | Inventaire |
 | `Q` | Jeter l'objet tenu |
 | `F` / `F5` | Vue à la troisième personne |
@@ -176,6 +189,10 @@ Quelques points de conception :
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
 - Les fluides ne s'écoulent pas ; l'eau et la lave sont statiques.
+- Les dalles sont le seul bloc non cubique : escaliers, murets et clôtures
+  demanderaient au mailleur de gérer des formes composées de plusieurs boîtes.
+- Le lancer de rayon vise le voxel entier : on peut cibler une dalle en visant
+  sa moitié vide.
 - Une seule cascade d'ombre : au-delà du rayon couvert (48 à 110 blocs selon la
   distance de rendu), les ombres s'estompent au lieu de se prolonger.
 - La lumière de bloc est monochrome : une torche et une lanterne aquatique

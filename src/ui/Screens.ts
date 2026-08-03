@@ -5,7 +5,7 @@
 
 import type { Settings } from '../core/Settings';
 import { Container, HOTBAR_SIZE, MAIN_SIZE, type Inventory, type ItemStack } from '../items/Inventory';
-import { ITEMS } from '../items/items';
+import { CATEGORY_LABELS, ITEMS, itemCategory, type ItemCategory } from '../items/items';
 import { findRecipe, type RecipeResult } from '../items/recipes';
 import type { WorldMeta } from '../save/SaveManager';
 import { renderSlot } from './Hud';
@@ -30,7 +30,7 @@ export interface ScreenContext {
   settings: Settings;
   applySettings(): void;
   listWorlds(): Promise<WorldMeta[]>;
-  createWorld(name: string, seed: string, mode: number): void;
+  createWorld(name: string, seed: string, mode: number, flat: boolean): void;
   playWorld(meta: WorldMeta): void;
   deleteWorld(id: string): Promise<void>;
   resume(): void;
@@ -208,8 +208,25 @@ export class Screens {
       o.textContent = label;
     }
 
+    const typeField = el('label', 'field', p);
+    el('span', undefined, typeField).textContent = 'Type de monde';
+    const typeSelect = el('select', undefined, typeField);
+    for (const [v, label] of [
+      ['normal', 'Normal — reliefs, biomes, grottes'],
+      ['flat', 'Superplat — sol uni, idéal pour bâtir'],
+    ] as const) {
+      const o = el('option', undefined, typeSelect);
+      o.value = v;
+      o.textContent = label;
+    }
+
     this.button(p, 'Créer et jouer', 'primary', () => {
-      this.ctx.createWorld(nameInput.value.trim() || 'Nouveau monde', seedInput.value.trim(), Number(modeSelect.value));
+      this.ctx.createWorld(
+        nameInput.value.trim() || 'Nouveau monde',
+        seedInput.value.trim(),
+        Number(modeSelect.value),
+        typeSelect.value === 'flat',
+      );
     });
     this.button(p, 'Retour', '', () => this.show('menu'));
   }
@@ -321,6 +338,14 @@ export class Screens {
       ['/meteo clair|pluie', 'Changer la météo'],
       ['/seed', 'Afficher la graine'],
       ['/tuer', 'Supprimer les créatures proches'],
+      ['/figer', 'Figer ou relancer le temps'],
+      ['/mobs on|off', 'Activer ou couper l’apparition des créatures'],
+      ['/pos1  /pos2', 'Marquer les deux coins d’une zone (bloc visé)'],
+      ['/remplir <bloc>', 'Remplir la zone sélectionnée'],
+      ['/coque <bloc>', 'Ne remplir que l’enveloppe de la zone'],
+      ['/remplacer <de> <vers>', 'Remplacer un bloc par un autre dans la zone'],
+      ['/copier  /coller', 'Copier la zone, la coller à sa position'],
+      ['/annuler', 'Annuler la dernière opération de zone'],
       ['/aide', 'Liste des commandes'],
     ];
     for (const [k, v] of cmds) {
@@ -394,22 +419,48 @@ export class Screens {
 
   private resultSlot: HTMLElement | null = null;
 
+  /** Onglet courant du sélecteur créatif, conservé d'une ouverture à l'autre. */
+  private creativeTab: ItemCategory | 'tous' = 'construction';
+
   private buildCreativePicker(parent: HTMLElement): void {
     const sec = el('div', 'inv-section', parent);
     el('h3', undefined, sec).textContent =
-      'Tous les objets — clic pour prendre une pile, clic droit pour une unité';
+      'Clic pour une pile, clic droit pour une unité — clic milieu dans le monde pour prendre un bloc';
+
+    const tabs = el('div', 'tab-row', sec);
     const search = el('input', undefined, sec);
     search.type = 'text';
-    search.placeholder = 'Rechercher…';
+    search.placeholder = 'Rechercher dans tous les objets…';
     search.style.marginBottom = '8px';
     const grid = el('div', 'creative-grid', sec);
+
+    const categories: (ItemCategory | 'tous')[] = [
+      'construction', 'couleurs', 'nature', 'redstone', 'outils', 'ressources', 'nourriture', 'tous',
+    ];
+    const tabButtons = new Map<string, HTMLElement>();
+    for (const c of categories) {
+      const b = el('button', 'tab', tabs);
+      b.textContent = c === 'tous' ? 'Tout' : CATEGORY_LABELS[c];
+      b.addEventListener('click', () => {
+        this.creativeTab = c;
+        for (const [k, el2] of tabButtons) el2.classList.toggle('on', k === c);
+        render(search.value);
+        this.ctx.sound('click');
+      });
+      tabButtons.set(c, b);
+    }
+    tabButtons.get(this.creativeTab)?.classList.add('on');
 
     const render = (filter: string) => {
       grid.innerHTML = '';
       const f = filter.trim().toLowerCase();
+      let shown = 0;
       for (const def of ITEMS) {
         if (def.id === 0) continue;
+        // La recherche traverse toutes les catégories ; sinon on filtre par onglet.
+        if (!f && this.creativeTab !== 'tous' && itemCategory(def) !== this.creativeTab) continue;
         if (f && !def.name.toLowerCase().includes(f) && !def.key.includes(f)) continue;
+        shown++;
         const slot = el('div', 'slot interactive', grid);
         el('img', undefined, slot);
         el('span', 'count', slot);
@@ -424,6 +475,7 @@ export class Screens {
         });
         slot.addEventListener('contextmenu', (e) => e.preventDefault());
       }
+      if (shown === 0) el('div', 'empty-note', grid).textContent = 'Aucun objet ne correspond.';
     };
     render('');
     search.addEventListener('input', () => render(search.value));

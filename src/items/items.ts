@@ -87,6 +87,8 @@ for (const b of BLOCKS) {
   if (b.id === 0) continue;
   if (b.hardness < 0 && b.key !== 'bedrock') continue; // eau, lave : pas d'item
   if (b.key === 'bedrock') continue;
+  // `_slab_top` n'est qu'une variante de pose : un seul objet par matériau.
+  if (b.key.endsWith('_slab_top')) continue;
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -293,4 +295,47 @@ export const SMELTING: Record<string, string> = {
 export function blockItemFor(blockKey: string): ItemDef | undefined {
   const b = BLOCK_BY_KEY.get(blockKey);
   return b ? ITEM_OF_BLOCK.get(b.id) : undefined;
+}
+
+
+// ---------------------------------------------------------------------------
+// Catégories : structurent le sélecteur d'objets du mode créatif.
+// ---------------------------------------------------------------------------
+
+export type ItemCategory = 'construction' | 'couleurs' | 'nature' | 'redstone' | 'outils' | 'ressources' | 'nourriture';
+
+export const CATEGORY_LABELS: Record<ItemCategory, string> = {
+  construction: 'Construction',
+  couleurs: 'Couleurs',
+  nature: 'Nature',
+  redstone: 'Mécanismes',
+  outils: 'Équipement',
+  ressources: 'Ressources',
+  nourriture: 'Nourriture',
+};
+
+const NATURE_KEYS = new Set([
+  'grass_block', 'dirt', 'coarse_dirt', 'sand', 'red_sand', 'gravel', 'clay', 'snow_block',
+  'ice', 'packed_ice', 'cactus', 'pumpkin', 'melon', 'jack_o_lantern',
+]);
+
+export function itemCategory(def: ItemDef): ItemCategory {
+  if (def.tool || def.armor) return 'outils';
+  if (def.food) return 'nourriture';
+  if (!def.block) return 'ressources';
+
+  const key = def.key;
+  if (key.endsWith('_wool') || key.endsWith('_concrete') || key.endsWith('_terracotta') || key.endsWith('_stained_glass')) {
+    return 'couleurs';
+  }
+  if (key === 'tnt' || key === 'crafting_table' || key === 'furnace' || key === 'chest' || key === 'bookshelf') {
+    return 'redstone';
+  }
+  if (NATURE_KEYS.has(key)) return 'nature';
+  const b = BLOCKS[def.block];
+  if (b && (b.render === RenderKind.Cross || key.endsWith('_leaves') || key.endsWith('_log') || key.endsWith('_sapling'))) {
+    return 'nature';
+  }
+  if (key.endsWith('_ore')) return 'ressources';
+  return 'construction';
 }

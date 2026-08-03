@@ -103,6 +103,48 @@ RECIPES.push(shapeless(['cobblestone', 'tall_grass'], 'mossy_cobblestone'));
 RECIPES.push(shaped(['GG', 'GG'], { G: 'gravel' }, 'coarse_dirt', 4));
 RECIPES.push(shaped(['SSS', 'SSS', 'SSS'], { S: 'snow_block' }, 'packed_ice'));
 
+// --- Dalles : trois blocs alignés donnent six dalles, et l'inverse ---------
+const SLAB_RECIPES: [string, string][] = [
+  ['stone', 'stone_slab'],
+  ['cobblestone', 'cobblestone_slab'],
+  ['stone_bricks', 'stone_brick_slab'],
+  ['sandstone', 'sandstone_slab'],
+  ['bricks', 'brick_slab'],
+  ['quartz_block', 'quartz_slab'],
+  ['oak_planks', 'oak_slab'],
+  ['birch_planks', 'birch_slab'],
+  ['spruce_planks', 'spruce_slab'],
+  ['jungle_planks', 'jungle_slab'],
+];
+for (const [full, slab] of SLAB_RECIPES) {
+  RECIPES.push(shaped(['FFF'], { F: full }, slab, 6));
+  RECIPES.push(shaped(['S', 'S'], { S: slab }, full));
+}
+
+// --- Palette de construction ----------------------------------------------
+RECIPES.push(shaped(['SS', 'SS'], { S: 'smooth_stone' }, 'quartz_block'));
+RECIPES.push(shaped(['GG', 'GG'], { G: 'granite' }, 'polished_granite', 4));
+RECIPES.push(shaped(['DD', 'DD'], { D: 'diorite' }, 'polished_diorite', 4));
+RECIPES.push(shaped(['AA', 'AA'], { A: 'andesite' }, 'polished_andesite', 4));
+RECIPES.push(shaped(['SS', 'SS'], { S: 'stone_bricks' }, 'chiseled_stone_bricks'));
+RECIPES.push(shaped(['NN', 'NN'], { N: 'nether_bricks' }, 'nether_bricks', 4));
+RECIPES.push(shaped(['PP', 'PP'], { P: 'prismarine' }, 'dark_prismarine'));
+
+// Béton, terre cuite et verre teinté : un colorant pour huit blocs de base.
+const COLOR_SOURCES: [string, string][] = [
+  ['poppy', 'red'], ['dandelion', 'yellow'], ['blue_orchid', 'light_blue'],
+  ['lapis', 'blue'], ['coal', 'black'], ['emerald', 'green'],
+  ['brown_mushroom', 'brown'], ['clay_ball', 'gray'], ['redstone', 'magenta'],
+];
+for (const [dye, color] of COLOR_SOURCES) {
+  RECIPES.push(shaped(['SSS', 'SDS', 'SSS'], { S: 'sand', D: dye }, `${color}_concrete`, 8));
+  RECIPES.push(shaped(['TTT', 'TDT', 'TTT'], { T: 'clay', D: dye }, `${color}_terracotta`, 8));
+  RECIPES.push(shaped(['GGG', 'GDG', 'GGG'], { G: 'glass', D: dye }, `${color}_stained_glass`, 8));
+}
+RECIPES.push(shaped(['SSS', 'S S', 'SSS'], { S: 'sand' }, 'white_concrete', 8));
+RECIPES.push(shaped(['TTT', 'T T', 'TTT'], { T: 'clay' }, 'white_terracotta', 8));
+RECIPES.push(shaped(['GGG', 'G G', 'GGG'], { G: 'glass' }, 'white_stained_glass', 8));
+
 // --- Divers ----------------------------------------------------------------
 RECIPES.push(shapeless(['wheat', 'wheat', 'wheat'], 'bread'));
 RECIPES.push(shaped(['CCC'], { C: 'sugar_cane' }, 'paper', 3));

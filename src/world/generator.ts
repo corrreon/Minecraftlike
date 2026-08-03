@@ -58,8 +58,12 @@ export class TerrainGenerator {
   private colHeight = new Int16Array(CHUNK_X * CHUNK_Z);
   private colBiome = new Uint8Array(CHUNK_X * CHUNK_Z);
 
-  constructor(seed: number) {
+  /** Monde superplat : idéal pour bâtir sans terrain qui gêne. */
+  readonly flat: boolean;
+
+  constructor(seed: number, flat = false) {
     this.seed = seed | 0;
+    this.flat = flat;
     const s = this.seed;
     this.nCont = new Simplex(s + 1);
     this.nEro = new Simplex(s + 2);
@@ -173,6 +177,8 @@ export class TerrainGenerator {
     const ox = cx * CHUNK_X;
     const oz = cz * CHUNK_Z;
 
+    if (this.flat) return this.generateFlat(blocks, heightmap, biomes);
+
     this.buildCaveGrid(ox, oz);
 
     // 1) Colonnes de roche et couches de surface.
@@ -271,6 +277,21 @@ export class TerrainGenerator {
     this.decorate(blocks, heightmap, cx, cz, overflow);
 
     return { blocks, biomes, heightmap, overflow: Int32Array.from(overflow) };
+  }
+
+  /** Bedrock, trois couches de terre, une d'herbe : rien d'autre. */
+  private generateFlat(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array): GenResult {
+    const top = 4;
+    for (let lz = 0; lz < CHUNK_Z; lz++) {
+      for (let lx = 0; lx < CHUNK_X; lx++) {
+        blocks[voxelIndex(lx, 0, lz)] = B.bedrock;
+        for (let y = 1; y < top; y++) blocks[voxelIndex(lx, y, lz)] = B.dirt;
+        blocks[voxelIndex(lx, top, lz)] = B.grass;
+        heightmap[lx + lz * CHUNK_X] = top;
+        biomes[lx + lz * CHUNK_X] = Biome.Plains;
+      }
+    }
+    return { blocks, biomes, heightmap, overflow: new Int32Array(0) };
   }
 
   // --- Minerais -----------------------------------------------------------

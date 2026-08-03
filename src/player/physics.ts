@@ -2,7 +2,7 @@
 
 import { Vector3 } from 'three';
 import { WORLD_HEIGHT } from '../core/constants';
-import { IS_SOLID, RENDER_KIND, RenderKind } from '../world/blocks';
+import { IS_SOLID, MAX_Y, MIN_Y, RENDER_KIND, RenderKind } from '../world/blocks';
 import type { World } from '../world/World';
 
 export interface Box {
@@ -23,15 +23,6 @@ export interface MoveResult {
   stepped: number;
 }
 
-/** Le voxel bloque-t-il le déplacement ? */
-function solidAt(world: World, x: number, y: number, z: number): boolean {
-  if (y < 0) return true;
-  if (y >= WORLD_HEIGHT) return false;
-  const b = world.getBlock(x, y, z);
-  if (b < 0) return true; // chunk non chargé : mur invisible plutôt qu'une chute
-  return IS_SOLID[b] === 1;
-}
-
 function overlaps(world: World, b: Box): boolean {
   const half = b.width / 2;
   const x0 = Math.floor(b.x - half + 1e-6);
@@ -40,9 +31,20 @@ function overlaps(world: World, b: Box): boolean {
   const y1 = Math.floor(b.y + b.height - 1e-6);
   const z0 = Math.floor(b.z - half + 1e-6);
   const z1 = Math.floor(b.z + half - 1e-6);
-  for (let y = y0; y <= y1; y++)
-    for (let z = z0; z <= z1; z++)
-      for (let x = x0; x <= x1; x++) if (solidAt(world, x, y, z)) return true;
+  const top = b.y + b.height;
+  for (let y = y0; y <= y1; y++) {
+    for (let z = z0; z <= z1; z++) {
+      for (let x = x0; x <= x1; x++) {
+        if (y < 0) return true;
+        if (y >= WORLD_HEIGHT) continue;
+        const id = world.getBlock(x, y, z);
+        if (id < 0) return true; // chunk non chargé : mur invisible
+        if (!IS_SOLID[id]) continue;
+        // Les dalles n'occupent qu'une partie de leur voxel.
+        if (b.y < y + MAX_Y[id] && top > y + MIN_Y[id]) return true;
+      }
+    }
+  }
   return false;
 }
 

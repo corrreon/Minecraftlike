@@ -74,6 +74,9 @@ export interface BlockDef {
   layers: { top: number; bottom: number; side: number };
   /** Le bloc peut brûler / être détruit par la lave. */
   flammable: boolean;
+  /** Emprise verticale du bloc, en fraction de voxel. Une dalle vaut 0→0,5. */
+  minY: number;
+  maxY: number;
 }
 
 const TEXTURE_ORDER: string[] = [];
@@ -113,6 +116,8 @@ interface BlockOptions {
   sound?: BlockDef['sound'];
   tint?: number;
   flammable?: boolean;
+  minY?: number;
+  maxY?: number;
 }
 
 function define(key: string, o: BlockOptions): BlockDef {
@@ -150,6 +155,8 @@ function define(key: string, o: BlockOptions): BlockDef {
     sound: o.sound ?? 'stone',
     tint: o.tint ?? 0,
     flammable: o.flammable ?? false,
+    minY: o.minY ?? 0,
+    maxY: o.maxY ?? 1,
     textures: t,
     layers: { top: tex(t.top), bottom: tex(t.bottom), side: tex(t.side) },
   };
@@ -425,6 +432,117 @@ cross('torch', 'Torche', 'torch', {
 });
 cross('wheat', 'Blé', 'wheat', { drop: 'wheat', flammable: true });
 
+// ---------------------------------------------------------------------------
+// Extension « créatif » : palette de couleurs, variantes de pierre et dalles.
+// Ajoutée en fin de registre : les identifiants existants ne bougent pas, les
+// sauvegardes restent lisibles.
+// ---------------------------------------------------------------------------
+
+/** Les 16 teintes standard, partagées par le béton, la terre cuite et le verre. */
+export const DYE_COLORS: readonly (readonly [string, string, number])[] = [
+  ['white', 'blanc', 0xd8d8d0],
+  ['orange', 'orange', 0xe0761f],
+  ['magenta', 'magenta', 0xb03bb0],
+  ['light_blue', 'bleu clair', 0x3a9cd8],
+  ['yellow', 'jaune', 0xe5c327],
+  ['lime', 'vert clair', 0x62b118],
+  ['pink', 'rose', 0xe08aa5],
+  ['gray', 'gris', 0x3a3f44],
+  ['light_gray', 'gris clair', 0x8e9294],
+  ['cyan', 'cyan', 0x158991],
+  ['purple', 'violet', 0x6a24a8],
+  ['blue', 'bleu', 0x2a35a0],
+  ['brown', 'marron', 0x6a4020],
+  ['green', 'vert', 0x4f6a1a],
+  ['red', 'rouge', 0x9e2b27],
+  ['black', 'noir', 0x15181a],
+];
+
+for (const [key, name, color] of DYE_COLORS) {
+  define(`${key}_concrete`, {
+    name: `Béton ${name}`,
+    textures: 'concrete',
+    hardness: 1.8,
+    tool: 'pickaxe',
+    needsTool: true,
+    tint: color,
+  });
+}
+for (const [key, name, color] of DYE_COLORS) {
+  define(`${key}_terracotta`, {
+    name: `Terre cuite ${name}`,
+    textures: 'terracotta',
+    hardness: 1.25,
+    tool: 'pickaxe',
+    needsTool: true,
+    tint: color,
+  });
+}
+for (const [key, name, color] of DYE_COLORS) {
+  define(`${key}_stained_glass`, {
+    name: `Verre teinté ${name}`,
+    textures: 'stained_glass',
+    layer: RenderLayer.Translucent,
+    opaque: false,
+    lightFilter: 1,
+    hardness: 0.3,
+    drop: 'air',
+    sound: 'glass',
+    tint: color,
+  });
+}
+
+// Variantes de pierre : de quoi bâtir sans tout faire en pierre taillée.
+define('smooth_stone', { name: 'Pierre lisse', textures: 'smooth_stone', hardness: 2, tool: 'pickaxe', needsTool: true });
+define('polished_granite', { name: 'Granite poli', textures: 'polished_granite', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('polished_diorite', { name: 'Diorite polie', textures: 'polished_diorite', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('polished_andesite', { name: 'Andésite polie', textures: 'polished_andesite', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('cracked_stone_bricks', { name: 'Pierre taillée fissurée', textures: 'cracked_stone_bricks', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('chiseled_stone_bricks', { name: 'Pierre taillée sculptée', textures: 'chiseled_stone_bricks', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('quartz_block', { name: 'Bloc de quartz', textures: 'quartz', hardness: 0.8, tool: 'pickaxe', needsTool: true });
+define('quartz_pillar', { name: 'Pilier de quartz', textures: { top: 'quartz_pillar_top', side: 'quartz_pillar' }, hardness: 0.8, tool: 'pickaxe', needsTool: true });
+define('prismarine', { name: 'Prismarine', textures: 'prismarine', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('dark_prismarine', { name: 'Prismarine sombre', textures: 'dark_prismarine', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('purpur_block', { name: 'Bloc de purpur', textures: 'purpur', hardness: 1.5, tool: 'pickaxe', needsTool: true });
+define('nether_bricks', { name: 'Briques du Nether', textures: 'nether_bricks', hardness: 2, tool: 'pickaxe', needsTool: true });
+
+// Dalles : un bloc de haut sur un demi-voxel. Deux variantes par matériau,
+// posée en bas ou en haut selon l'endroit visé.
+export const SLAB_MATERIALS: readonly (readonly [string, string, string])[] = [
+  ['stone', 'de pierre', 'stone'],
+  ['cobblestone', 'de pierre taillée', 'cobblestone'],
+  ['stone_brick', 'de pierre sculptée', 'stone_bricks'],
+  ['sandstone', 'de grès', 'sandstone'],
+  ['brick', 'de briques', 'bricks'],
+  ['quartz', 'de quartz', 'quartz'],
+  ['oak', 'de chêne', 'oak_planks'],
+  ['birch', 'de bouleau', 'birch_planks'],
+  ['spruce', 'de sapin', 'spruce_planks'],
+  ['jungle', 'd’acajou', 'jungle_planks'],
+];
+
+for (const [key, name, texture] of SLAB_MATERIALS) {
+  const wood = key === 'oak' || key === 'birch' || key === 'spruce' || key === 'jungle';
+  for (const [suffix, minY, maxY] of [['', 0, 0.5], ['_top', 0.5, 1]] as const) {
+    define(`${key}_slab${suffix}`, {
+      name: `Dalle ${name}${suffix ? ' (haute)' : ''}`,
+      textures: texture,
+      // Le bloc ne remplit pas son voxel : il ne masque pas les faces voisines,
+      // mais il arrête toute la lumière.
+      opaque: false,
+      lightFilter: 15,
+      hardness: wood ? 2 : 2,
+      tool: wood ? 'axe' : 'pickaxe',
+      needsTool: !wood,
+      sound: wood ? 'wood' : 'stone',
+      flammable: wood,
+      drop: `${key}_slab`,
+      minY,
+      maxY,
+    });
+  }
+}
+
 export const AIR = 0;
 export const BLOCK_COUNT = BLOCKS.length;
 
@@ -438,6 +556,11 @@ export const RENDER_LAYER = new Uint8Array(BLOCK_COUNT);
 export const IS_FLUID = new Uint8Array(BLOCK_COUNT);
 export const IS_REPLACEABLE = new Uint8Array(BLOCK_COUNT);
 export const TINTS = new Uint32Array(BLOCK_COUNT);
+/** Emprise verticale : 1 quand le bloc remplit son voxel. */
+export const MIN_Y = new Float32Array(BLOCK_COUNT);
+export const MAX_Y = new Float32Array(BLOCK_COUNT);
+/** Le bloc n'occupe pas tout son voxel (dalle) : géométrie et collision à part. */
+export const IS_PARTIAL = new Uint8Array(BLOCK_COUNT);
 /** [top, bottom, side] aplatis par identifiant de bloc. */
 export const TEX_LAYERS = new Uint16Array(BLOCK_COUNT * 3);
 
@@ -451,6 +574,9 @@ for (const b of BLOCKS) {
   IS_FLUID[b.id] = b.fluid ? 1 : 0;
   IS_REPLACEABLE[b.id] = b.replaceable ? 1 : 0;
   TINTS[b.id] = b.tint;
+  MIN_Y[b.id] = b.minY;
+  MAX_Y[b.id] = b.maxY;
+  IS_PARTIAL[b.id] = b.minY > 0 || b.maxY < 1 ? 1 : 0;
   TEX_LAYERS[b.id * 3 + 0] = b.layers.top;
   TEX_LAYERS[b.id * 3 + 1] = b.layers.bottom;
   TEX_LAYERS[b.id * 3 + 2] = b.layers.side;

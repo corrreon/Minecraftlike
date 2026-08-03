@@ -29,6 +29,7 @@ import {
   REACH_SURVIVAL,
   SEA_LEVEL,
   WORLD_HEIGHT,
+  chunkKey,
   floorDiv,
   mod,
   voxelIndex,
@@ -52,7 +53,7 @@ import { PostFX, projectSun } from '../render/PostFX';
 import { Sky, computeSkyState, createSkyState } from '../render/Sky';
 import { ShadowMap } from '../render/ShadowMap';
 import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type PlayerSave, type WorldMeta } from '../save/SaveManager';
-import { BLOCKS, IS_SOLID, RenderKind, block as blockDef } from '../world/blocks';
+import { BLOCKS, BLOCK_BY_KEY, IS_SOLID, RenderKind, block as blockDef } from '../world/blocks';
 import { biomeDef } from '../world/biomes';
 import { ChunkState } from '../world/Chunk';
 import { World } from '../world/World';
@@ -119,6 +120,8 @@ export class Game {
   private mobTimer = 0;
   private autosaveTimer = 0;
   private playtime = 0;
+  private timeFrozen = false;
+  private mobsEnabled = true;
   private rainTarget = 0;
   private rainLevel = 0;
   private weatherTimer = 120;
@@ -159,7 +162,7 @@ export class Game {
       settings: this.settings,
       applySettings: () => this.applySettings(),
       listWorlds: () => listWorlds(this.db),
-      createWorld: (name, seed, mode) => void this.createWorld(name, seed, mode),
+      createWorld: (name, seed, mode, flat) => void this.createWorld(name, seed, mode, flat),
       playWorld: (meta) => void this.startWorld(meta),
       deleteWorld: (id) => dbDeleteWorld(this.db, id),
       resume: () => this.closeScreen(),
@@ -296,7 +299,7 @@ export class Game {
 
   // --- Cycle de vie d'un monde -------------------------------------------
 
-  private async createWorld(name: string, seedText: string, mode: number): Promise<void> {
+  private async createWorld(name: string, seedText: string, mode: number, flat = false): Promise<void> {
     const seed = seedText ? hashSeed(seedText) : (Math.random() * 2 ** 31) | 0;
     const meta: WorldMeta = {
       id: `w_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
@@ -307,6 +310,7 @@ export class Game {
       lastPlayed: Date.now(),
       playtime: 0,
       dayTime: 0.42,
+      flat,
     };
     await this.startWorld(meta, true);
   }
@@ -322,7 +326,7 @@ export class Game {
 
     this.rnd = mulberry32(meta.seed ^ 0x9e3779b9);
     this.world = new World(meta.seed);
-    this.pool = new WorkerPool(meta.seed);
+    this.pool = new WorkerPool(meta.seed, meta.flat === true);
     this.particles = new ParticleSystem(this.world);
     this.scene.add(this.particles.mesh);
 
@@ -604,6 +608,88 @@ export class Game {
     this.hud.toast(text);
   }
 
+  // --- Outils de construction (mode créatif) --------------------------------
+
+  private sel1: Vector3 | null = null;
+  private sel2: Vector3 | null = null;
+  /** Pile d'annulation : quadruplets [x, y, z, ancien bloc]. */
+  private undoStack: number[][] = [];
+  /** Presse-papier : dimensions puis contenu, relatif au coin minimal. */
+  private clipboard: { w: number; h: number; d: number; data: Uint8Array } | null = null;
+
+  private static readonly MAX_REGION = 160000;
+
+  private selectionBounds(): { x0: number; y0: number; z0: number; x1: number; y1: number; z1: number; count: number } | null {
+    if (!this.sel1 || !this.sel2) return null;
+    const x0 = Math.min(this.sel1.x, this.sel2.x), x1 = Math.max(this.sel1.x, this.sel2.x);
+    const y0 = Math.min(this.sel1.y, this.sel2.y), y1 = Math.max(this.sel1.y, this.sel2.y);
+    const z0 = Math.min(this.sel1.z, this.sel2.z), z1 = Math.max(this.sel1.z, this.sel2.z);
+    const count = (x1 - x0 + 1) * (y1 - y0 + 1) * (z1 - z0 + 1);
+    return { x0, y0, z0, x1, y1, z1, count };
+  }
+
+  /**
+   * Applique une transformation à chaque voxel d'une région, en un seul lot :
+   * écritures brutes, puis un unique recalcul de lumière par chunk touché.
+   * Passer bloc par bloc par `setBlock` déclencherait une propagation de
+   * lumière par bloc et prendrait des minutes sur une grande zone.
+   */
+  private editRegion(
+    x0: number, y0: number, z0: number,
+    x1: number, y1: number, z1: number,
+    pick: (x: number, y: number, z: number, current: number) => number | null,
+  ): number {
+    const undo: number[] = [];
+    const touched = new Set<string>();
+    let changed = 0;
+    for (let y = y0; y <= y1; y++) {
+      if (y < 0 || y >= WORLD_HEIGHT) continue;
+      for (let z = z0; z <= z1; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const current = this.world.getBlock(x, y, z);
+          if (current < 0) continue;
+          const next = pick(x, y, z, current);
+          if (next === null || next === current) continue;
+          if (!this.world.setBlockRaw(x, y, z, next)) continue;
+          undo.push(x, y, z, current);
+          touched.add(chunkKey(floorDiv(x, CHUNK_X), floorDiv(z, CHUNK_Z)));
+          changed++;
+        }
+      }
+    }
+    if (!changed) return 0;
+    this.undoStack.push(undo);
+    if (this.undoStack.length > 8) this.undoStack.shift();
+    this.finishBulk(touched);
+    return changed;
+  }
+
+  private finishBulk(touched: Set<string>): void {
+    for (const key of touched) {
+      const [cx, cz] = key.split(',').map(Number);
+      this.world.relight(cx, cz);
+      const c = this.world.chunks.get(key);
+      if (c?.edits && this.save) this.save.storeEdits(cx, cz, c.edits);
+    }
+  }
+
+  private resolveBlock(name: string | undefined): number | null {
+    if (!name) return null;
+    if (name === 'air' || name === 'vide') return 0;
+    const b = BLOCK_BY_KEY.get(name);
+    return b ? b.id : null;
+  }
+
+  /** Bloc actuellement visé, ou la position du joueur à défaut. */
+  private aimedOrFeet(): Vector3 {
+    if (this.lastHit) return new Vector3(this.lastHit.x, this.lastHit.y, this.lastHit.z);
+    return new Vector3(
+      Math.floor(this.player.position.x),
+      Math.floor(this.player.position.y),
+      Math.floor(this.player.position.z),
+    );
+  }
+
   runCommand(raw: string): void {
     const text = raw.startsWith('/') ? raw.slice(1) : raw;
     const parts = text.split(/\s+/);
@@ -669,9 +755,118 @@ export class Game {
         this.echo(`${n} créature(s) supprimée(s).`);
         break;
       }
+      // --- Sélection et édition de région ---
+      case 'pos1':
+      case 'pos2': {
+        const p = this.aimedOrFeet();
+        if (cmd === 'pos1') this.sel1 = p;
+        else this.sel2 = p;
+        const b = this.selectionBounds();
+        this.echo(`${cmd} en ${p.x}, ${p.y}, ${p.z}${b ? ` — ${b.count} blocs sélectionnés` : ''}`);
+        break;
+      }
+      case 'sel': {
+        const b = this.selectionBounds();
+        if (!b) { this.sel1 = this.sel2 = null; this.echo('Sélection effacée.'); break; }
+        this.echo(`Sélection : ${b.x1 - b.x0 + 1} × ${b.y1 - b.y0 + 1} × ${b.z1 - b.z0 + 1} = ${b.count} blocs`);
+        break;
+      }
+      case 'fill':
+      case 'remplir': {
+        const b = this.selectionBounds();
+        const id = this.resolveBlock(parts[0]);
+        if (!b) { this.echo('Définissez d’abord /pos1 et /pos2.'); break; }
+        if (id === null) { this.echo(`Bloc inconnu : ${parts[0]}`); break; }
+        if (b.count > Game.MAX_REGION) { this.echo(`Trop grand : ${b.count} blocs (max ${Game.MAX_REGION}).`); break; }
+        const n = this.editRegion(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1, () => id);
+        this.echo(`${n} bloc(s) remplacé(s).`);
+        break;
+      }
+      case 'hollow':
+      case 'coque': {
+        const b = this.selectionBounds();
+        const id = this.resolveBlock(parts[0]);
+        if (!b || id === null) { this.echo('Usage : /coque <bloc>, après /pos1 et /pos2.'); break; }
+        if (b.count > Game.MAX_REGION) { this.echo('Zone trop grande.'); break; }
+        const n = this.editRegion(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1, (x, y, z) =>
+          (x === b.x0 || x === b.x1 || y === b.y0 || y === b.y1 || z === b.z0 || z === b.z1) ? id : null);
+        this.echo(`Coque : ${n} bloc(s).`);
+        break;
+      }
+      case 'replace':
+      case 'remplacer': {
+        const b = this.selectionBounds();
+        const from = this.resolveBlock(parts[0]);
+        const to = this.resolveBlock(parts[1]);
+        if (!b || from === null || to === null) { this.echo('Usage : /remplacer <de> <vers>'); break; }
+        if (b.count > Game.MAX_REGION) { this.echo('Zone trop grande.'); break; }
+        const n = this.editRegion(b.x0, b.y0, b.z0, b.x1, b.y1, b.z1, (_x, _y, _z, cur) => (cur === from ? to : null));
+        this.echo(`${n} bloc(s) remplacé(s).`);
+        break;
+      }
+      case 'copy':
+      case 'copier': {
+        const b = this.selectionBounds();
+        if (!b) { this.echo('Définissez d’abord /pos1 et /pos2.'); break; }
+        if (b.count > Game.MAX_REGION) { this.echo('Zone trop grande.'); break; }
+        const w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1, d = b.z1 - b.z0 + 1;
+        const data = new Uint8Array(w * h * d);
+        for (let y = 0; y < h; y++)
+          for (let z = 0; z < d; z++)
+            for (let x = 0; x < w; x++) {
+              const v = this.world.getBlock(b.x0 + x, b.y0 + y, b.z0 + z);
+              data[x + w * (z + d * y)] = v < 0 ? 0 : v;
+            }
+        this.clipboard = { w, h, d, data };
+        this.echo(`Copié : ${w} × ${h} × ${d}.`);
+        break;
+      }
+      case 'paste':
+      case 'coller': {
+        const cb = this.clipboard;
+        if (!cb) { this.echo('Presse-papier vide — utilisez /copier.'); break; }
+        const ox = Math.floor(this.player.position.x);
+        const oy = Math.floor(this.player.position.y);
+        const oz = Math.floor(this.player.position.z);
+        const keepAir = parts[0] !== 'tout';
+        const n = this.editRegion(ox, oy, oz, ox + cb.w - 1, oy + cb.h - 1, oz + cb.d - 1, (x, y, z) => {
+          const v = cb.data[(x - ox) + cb.w * ((z - oz) + cb.d * (y - oy))];
+          return keepAir && v === 0 ? null : v;
+        });
+        this.echo(`Collé : ${n} bloc(s). (« /coller tout » écrase aussi avec le vide.)`);
+        break;
+      }
+      case 'undo':
+      case 'annuler': {
+        const last = this.undoStack.pop();
+        if (!last) { this.echo('Rien à annuler.'); break; }
+        const touched = new Set<string>();
+        for (let i = 0; i < last.length; i += 4) {
+          if (this.world.setBlockRaw(last[i], last[i + 1], last[i + 2], last[i + 3])) {
+            touched.add(chunkKey(floorDiv(last[i], CHUNK_X), floorDiv(last[i + 2], CHUNK_Z)));
+          }
+        }
+        this.finishBulk(touched);
+        this.echo(`Annulé : ${last.length / 4} bloc(s).`);
+        break;
+      }
+      // --- Règles du monde ---
+      case 'figer':
+      case 'freeze':
+        this.timeFrozen = !this.timeFrozen;
+        this.echo(this.timeFrozen ? 'Temps figé.' : 'Le temps reprend son cours.');
+        break;
+      case 'mobs': {
+        const a = parts[0]?.toLowerCase();
+        this.mobsEnabled = a === 'on' || a === 'oui' ? true : a === 'off' || a === 'non' ? false : !this.mobsEnabled;
+        if (!this.mobsEnabled) for (const m of this.mobs) m.dead = true;
+        this.echo(this.mobsEnabled ? 'Apparition des créatures activée.' : 'Créatures désactivées.');
+        break;
+      }
       case 'aide':
       case 'help':
-        this.echo('/gamemode /tp /time /give /meteo /seed /tuer');
+        this.echo('Jeu : /gamemode /tp /time /give /meteo /seed /tuer /figer /mobs');
+        this.echo('Construction : /pos1 /pos2 /sel /remplir /coque /remplacer /copier /coller /annuler');
         break;
       default:
         this.echo(`Commande inconnue : ${cmd}`);
@@ -744,7 +939,7 @@ export class Game {
     }
 
     // Temps, météo, ciel.
-    if (active) this.dayTime = (this.dayTime + dt / DAY_LENGTH_SECONDS) % 1;
+    if (active && !this.timeFrozen) this.dayTime = (this.dayTime + dt / DAY_LENGTH_SECONDS) % 1;
     this.updateWeather(dt, active);
     this.updateSky();
 
@@ -1151,8 +1346,17 @@ export class Game {
     if (target !== 0 && !blockDef(target).replaceable) return;
     if (this.blocksPlayer(nx, ny, nz, item.block)) return;
 
-    this.setBlock(nx, ny, nz, item.block);
-    this.audio.place(blockDef(item.block).sound as SoundGroup);
+    // Une dalle se pose en bas ou en haut du voxel selon l'endroit visé.
+    let placeId = item.block;
+    const placeDef = blockDef(placeId);
+    if (placeDef.key.endsWith('_slab')) {
+      const frac = hit.point.y - Math.floor(hit.point.y);
+      const upper = hit.ny < 0 || (hit.ny === 0 && frac > 0.5);
+      if (upper) placeId = BLOCK_BY_KEY.get(`${placeDef.key}_top`)?.id ?? placeId;
+    }
+
+    this.setBlock(nx, ny, nz, placeId);
+    this.audio.place(blockDef(placeId).sound as SoundGroup);
     this.heldView.swing = 1;
     if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
     this.applyGravityBlocks(nx, ny, nz);
@@ -1308,6 +1512,7 @@ export class Game {
   }
 
   private trySpawnMob(): void {
+    if (!this.mobsEnabled) return;
     if (this.mobs.length >= this.settings.maxMobs) return;
     if (this.player.mode === GameMode.Spectator) return;
     const night = this.skyState.dayFactor < 0.25;

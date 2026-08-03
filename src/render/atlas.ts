@@ -693,6 +693,56 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
   birch_sapling: (t, r) => sapling(t, r),
   spruce_sapling: (t, r) => sapling(t, r),
   jungle_sapling: (t, r) => sapling(t, r),
+  // --- Palette « créatif » -------------------------------------------------
+  // Béton, terre cuite et verre teinté sont peints en gris neutre : la teinte
+  // du bloc les colore à l'affichage, ce qui évite 48 textures redondantes.
+  concrete: (t, r) => { grainy(t, rgb(0xffffff), r, 0.07, 4); speckle(t, rgb(0xf0f0f0), r, 18, 0.97); },
+  terracotta: (t, r) => {
+    grainy(t, rgb(0xffffff), r, 0.16, 4);
+    const n = tileNoise(5, r);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) if (n[y * TILE + x] > 0.62) t.mul(x, y, 0.86);
+    speckle(t, rgb(0xd8d8d8), r, 22, 0.9);
+  },
+  stained_glass: (t, r) => {
+    grainy(t, rgb(0xffffff), r, 0.05, 3);
+    const b = Math.max(1, Math.round(S));
+    for (let i = 0; i < TILE; i++)
+      for (let k = 0; k < b; k++) {
+        t.set(i, k, rgb(0xffffff), 210, 1.1);
+        t.set(i, TILE - 1 - k, rgb(0xffffff), 210, 1.1);
+        t.set(k, i, rgb(0xffffff), 210, 1.1);
+        t.set(TILE - 1 - k, i, rgb(0xffffff), 210, 1.1);
+      }
+    for (let y = b; y < TILE - b; y++) for (let x = b; x < TILE - b; x++) t.data[(y * TILE + x) * 4 + 3] = 130;
+  },
+
+  smooth_stone: (t, r) => grainy(t, rgb(0xa0a0a0), r, 0.06, 4),
+  polished_granite: (t, r) => { grainy(t, rgb(0x9a6b5c), r, 0.09, 4); speckle(t, rgb(0xb08b7b), r, 16, 1.06); },
+  polished_diorite: (t, r) => { grainy(t, rgb(0xcfcfcf), r, 0.08, 4); speckle(t, rgb(0xb4b4b4), r, 16, 0.96); },
+  polished_andesite: (t, r) => { grainy(t, rgb(0x898b89), r, 0.08, 4); speckle(t, rgb(0x9c9e9a), r, 16, 1.05); },
+  cracked_stone_bricks: (t, r) => { brickPattern(t, rgb(0x7b7b7b), rgb(0x5a5a5a), r, 16, 32); cracks(t, r, 5, 20, 0.5); },
+  chiseled_stone_bricks: (t, r) => {
+    grainy(t, rgb(0x777777), r, 0.12, 4);
+    const b = Math.max(1, Math.round(S));
+    for (let i = 0; i < TILE; i++)
+      for (let k = 0; k < b; k++) { t.mul(i, k, 0.7); t.mul(k, i, 0.7); t.mul(i, TILE - 1 - k, 0.7); t.mul(TILE - 1 - k, i, 0.7); }
+    // Motif gravé au centre.
+    for (let y = 8; y < 16; y++) for (let x = 5; x < 11; x++) t.px(x, y - 4, rgb(0x616161), 255, 0.95 + r() * 0.1);
+    for (let y = 5; y < 8; y++) for (let x = 6; x < 10; x++) t.px(x, y, rgb(0x8a8a8a), 255);
+  },
+  quartz: (t, r) => grainy(t, rgb(0xece8e1), r, 0.07, 4),
+  quartz_pillar: (t, r) => {
+    grainy(t, rgb(0xece8e1), r, 0.07, 4);
+    for (let x = 0; x < TILE; x += 4 * S)
+      for (let y = 0; y < TILE; y++) { t.mul(x, y, 0.9); t.setHeight(x, y, 0.3); }
+  },
+  quartz_pillar_top: (t, r) => { grainy(t, rgb(0xece8e1), r, 0.07, 4); ringPattern(t, rgb(0xece8e1), rgb(0xd8d2c8), r); },
+  prismarine: (t, r) => { cellular(t, rgb(0x5f9c92), r, 10, 0.9, 0.24); blotch(t, rgb(0x7ab8ab), r, 0.6, 5); },
+  dark_prismarine: (t, r) => { grainy(t, rgb(0x2f4f43), r, 0.16, 5); speckle(t, rgb(0x1f382e), r, 26, 0.9); },
+  purpur: (t, r) => { grainy(t, rgb(0xa878a8), r, 0.13, 4); speckle(t, rgb(0xc09ac0), r, 20, 1.06); },
+  nether_bricks: (t, r) => brickPattern(t, rgb(0x36191d), rgb(0x221013), r, 8, 16),
+
   torch: (t, r) => {
     t.clear();
     for (let y = 6; y < 16; y++) {
