@@ -597,6 +597,20 @@ define('nether_portal', {
   render: RenderKind.Cube, layer: RenderLayer.Translucent,
   solid: false, opaque: false, lightFilter: 0, emission: 11, hardness: -1, replaceable: false, sound: 'glass',
 });
+/**
+ * Cristal de l'End, planté au sommet des colonnes d'obsidienne. Tant qu'il en
+ * reste un, le dragon se régénère : c'est le vrai enjeu du combat.
+ */
+define('end_crystal', {
+  name: 'Cristal de l’End', textures: 'end_crystal',
+  layer: RenderLayer.Cutout, opaque: false, lightFilter: 0, emission: 14,
+  hardness: 0.4, drop: 'air', sound: 'glass',
+});
+/** Trophée déposé par le dragon, à récupérer à la pioche. */
+define('dragon_egg', {
+  name: 'Œuf de dragon', textures: 'dragon_egg', emission: 4, hardness: 3, tool: 'pickaxe', sound: 'stone',
+});
+
 define('end_portal', {
   name: 'Portail de l’End', textures: 'end_portal',
   render: RenderKind.Cube, layer: RenderLayer.Translucent,
@@ -748,4 +762,6 @@ export const B = {
   end_portal: blockId('end_portal'),
   nether_bricks: blockId('nether_bricks'),
   purpur_block: blockId('purpur_block'),
+  end_crystal: blockId('end_crystal'),
+  dragon_egg: blockId('dragon_egg'),
 } as const;

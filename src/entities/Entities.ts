@@ -29,7 +29,7 @@ export type MobKind =
   | 'pig' | 'cow' | 'sheep' | 'chicken'
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
-  | 'blaze' | 'enderman';
+  | 'blaze' | 'enderman' | 'ender_dragon';
 
 interface MobPart {
   name: string;
@@ -37,7 +37,7 @@ interface MobPart {
   offset: [number, number, number];
   color: number;
   /** Type d'animation appliqué à la pièce. */
-  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'tentacle' | 'none';
+  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'none';
 }
 
 interface MobTraits {
@@ -57,6 +57,11 @@ interface MobTraits {
   erratic?: boolean;
   /** Se téléporte à courte distance quand on l'attaque. */
   blinks?: boolean;
+  /**
+   * Boss : tourne en orbite autour du centre de l'île et pique sur le joueur.
+   * `[rayon, altitude]` de l'orbite.
+   */
+  orbit?: [number, number];
 }
 
 interface MobDef extends MobTraits {
@@ -276,6 +281,39 @@ export const MOBS: Record<MobKind, MobDef> = {
     ],
     { blinks: true, knockback: 5 }),
 
+  /**
+   * Le dragon de l'End. Il tourne au-dessus de l'île, pique sur le joueur, et
+   * se régénère tant qu'un cristal reste debout sur une colonne.
+   */
+  ender_dragon: M('Dragon de l’End', true, 200, 11, 6, 4, 12, 90, 500,
+    [{ key: 'ender_pearl', min: 4, max: 8 }, { key: 'end_crystal', min: 1, max: 2 }],
+    [
+      // Corps.
+      { name: 'body', size: [1.7, 1.3, 3.2], offset: [0, 2.2, 0], color: 0x322c46 },
+      { name: 'ridge', size: [0.3, 0.4, 3.0], offset: [0, 2.95, 0], color: 0x6f5ab0 },
+      // Cou et tête, portés en avant.
+      { name: 'neck', size: [0.9, 0.9, 2.2], offset: [0, 2.7, -2.3], color: 0x3a3352, anim: 'head' },
+      { name: 'head', size: [1.2, 1.0, 1.6], offset: [0, 2.9, -4.0], color: 0x322c46, anim: 'head' },
+      { name: 'jaw', size: [1.0, 0.34, 1.3], offset: [0, 2.44, -4.1], color: 0x272238, anim: 'head' },
+      { name: 'eyeL', size: [0.3, 0.2, 0.1], offset: [-0.42, 3.16, -4.7], color: 0xd83a8c, anim: 'head' },
+      { name: 'eyeR', size: [0.3, 0.2, 0.1], offset: [0.42, 3.16, -4.7], color: 0xd83a8c, anim: 'head' },
+      { name: 'hornL', size: [0.2, 0.6, 0.2], offset: [-0.44, 3.5, -3.7], color: 0x6f5ab0, anim: 'head' },
+      { name: 'hornR', size: [0.2, 0.6, 0.2], offset: [0.44, 3.5, -3.7], color: 0x6f5ab0, anim: 'head' },
+      // Ailes membraneuses, en deux segments.
+      { name: 'wingL', size: [3.4, 0.16, 1.9], offset: [-2.5, 2.7, 0.1], color: 0x453c63, anim: 'wingL' },
+      { name: 'wingLTip', size: [2.6, 0.14, 1.3], offset: [-5.4, 2.7, 0.6], color: 0x554a78, anim: 'wingL' },
+      { name: 'wingR', size: [3.4, 0.16, 1.9], offset: [2.5, 2.7, 0.1], color: 0x453c63, anim: 'wingR' },
+      { name: 'wingRTip', size: [2.6, 0.14, 1.3], offset: [5.4, 2.7, 0.6], color: 0x554a78, anim: 'wingR' },
+      // Queue en trois tronçons qui s'affine.
+      { name: 'tail1', size: [0.8, 0.8, 1.8], offset: [0, 2.2, 2.3], color: 0x3a3352, anim: 'tail' },
+      { name: 'tail2', size: [0.55, 0.55, 1.8], offset: [0, 2.2, 4.0], color: 0x322c46, anim: 'tail' },
+      { name: 'tail3', size: [0.32, 0.32, 1.6], offset: [0, 2.2, 5.6], color: 0x272238, anim: 'tail' },
+      // Pattes repliées sous le corps.
+      { name: 'legL', size: [0.44, 1.0, 0.44], offset: [-0.7, 1.3, -0.6], color: 0x3a3352, anim: 'legFL' },
+      { name: 'legR', size: [0.44, 1.0, 0.44], offset: [0.7, 1.3, -0.6], color: 0x3a3352, anim: 'legFR' },
+    ],
+    { flies: true, orbit: [42, 82], knockback: 14 }),
+
   /** Le « bloop » : une masse gélatineuse qui rebondit et colle aux basques. */
   bloop: M('Bloop', true, 14, 2.6, 0.85, 0.85, 3, 18, 4,
     [{ key: 'clay_ball', min: 1, max: 3 }, { key: 'gunpowder', min: 0, max: 1 }],
@@ -343,6 +381,11 @@ export class Mob {
   /** Téléportation demandée par un coup reçu (enderman). */
   private blinkPending = false;
   private blinkCooldown = 0;
+  /** Plan de vol du boss : angle sur l'orbite, phase de piqué, altitude visée. */
+  private orbitAngle = 0;
+  private diving = false;
+  private diveTimer = 6;
+  private flyTargetY = 0;
   private walkPhase = 0;
   private parts: { mesh: Mesh; anim: MobPart['anim']; base: Vector3 }[] = [];
   material: ShaderMaterial;
@@ -394,7 +437,39 @@ export class Mob {
       this.aggro = false;
     }
 
-    if (this.aggro && dist > 0.05) {
+    if (d.orbit) {
+      // Le boss suit son propre plan de vol : ni errance ni poursuite directe.
+      this.aggro = true;
+      const [radius, height] = d.orbit;
+      this.diveTimer -= dt;
+      if (this.diveTimer <= 0) {
+        this.diving = !this.diving;
+        // Un piqué court, puis une longue remontée : le joueur a le temps de riposter.
+        this.diveTimer = this.diving ? 3.5 : 7 + this.rnd() * 5;
+      }
+
+      let tx: number, ty: number, tz: number;
+      if (this.diving) {
+        tx = focus.x; ty = focus.y + 1.2; tz = focus.z;
+      } else {
+        // Point courant de l'orbite autour de l'origine de l'île.
+        this.orbitAngle += dt * (d.speed / Math.max(8, radius));
+        tx = Math.cos(this.orbitAngle) * radius;
+        tz = Math.sin(this.orbitAngle) * radius;
+        ty = height + Math.sin(this.age * 0.4) * 3;
+      }
+      const dx = tx - this.position.x, dz = tz - this.position.z;
+      const len = Math.hypot(dx, dz) || 1;
+      wishX = dx / len;
+      wishZ = dz / len;
+      this.yaw = Math.atan2(dx, dz);
+      this.flyTargetY = ty;
+
+      if (dist < 4 + d.width * 0.5 && this.attackCooldown <= 0) {
+        this.attackCooldown = 1.4;
+        onDamagePlayer(d.damage);
+      }
+    } else if (this.aggro && dist > 0.05) {
       this.yaw = Math.atan2(toPlayer.x, toPlayer.z);
       const drive = this.kind === 'creeper' && this.fuse >= 0 ? 0 : 1;
       wishX = (toPlayer.x / dist) * drive;
@@ -458,7 +533,9 @@ export class Mob {
 
     if (d.flies) {
       // Vol libre : la créature vise l'altitude de sa cible, et s'écarte du sol.
-      const want = this.aggro ? focus.y + 1.2 : this.position.y + Math.sin(this.age * 0.8) * 1.5;
+      const want = d.orbit ? this.flyTargetY
+        : this.aggro ? focus.y + 1.2
+          : this.position.y + Math.sin(this.age * 0.8) * 1.5;
       let climb = clampNum(want - this.position.y, -1, 1);
       // Quelque chose juste sous les pieds — roche ou lave : on prend de
       // l'altitude, une braise ne se pose jamais.
@@ -527,6 +604,8 @@ export class Mob {
     const swing = d.aquatic
       ? Math.sin(this.age * 3.2) * 0.45
       : Math.sin(this.walkPhase * 2.4) * Math.min(0.7, 0.18 + planar * 0.22);
+    // Battement d'ailes : plus ample et plus lent que la marche.
+    const flap = Math.sin(this.age * 2.2) * 0.55;
     if (d.aquatic) this.group.rotation.x = Math.sin(this.age * 1.3) * 0.12 - (this.inWater ? 0 : 0.3);
     for (const p of this.parts) {
       switch (p.anim) {
@@ -543,8 +622,40 @@ export class Mob {
         case 'head':
           p.mesh.rotation.y = Math.sin(this.age * 0.7) * 0.15;
           break;
+        // Les ailes pivotent autour de l'axe Z, sinon elles battraient d'avant
+        // en arrière au lieu de haut en bas.
+        case 'wingL':
+          p.mesh.rotation.z = flap;
+          break;
+        case 'wingR':
+          p.mesh.rotation.z = -flap;
+          break;
+        case 'tail':
+          // Décalage de phase par tronçon : la queue ondule, elle ne pivote pas
+          // d'un bloc.
+          p.mesh.rotation.y = Math.sin(this.age * 1.7 - p.base.z * 0.35) * 0.28;
+          break;
         default:
           break;
+      }
+      // Ailes et queue s'articulent à leur emplanture, pas en leur centre.
+      if (p.anim === 'wingL' || p.anim === 'wingR') {
+        const w = (p.mesh.geometry as BoxGeometry).parameters.width;
+        const sign = p.anim === 'wingL' ? -1 : 1;
+        const pivotX = p.base.x - sign * (w / 2);
+        const a = p.mesh.rotation.z;
+        p.mesh.position.set(pivotX + sign * (w / 2) * Math.cos(a), p.base.y + sign * (w / 2) * Math.sin(a), p.base.z);
+        continue;
+      }
+      if (p.anim === 'tail') {
+        const dz = (p.mesh.geometry as BoxGeometry).parameters.depth;
+        const a = p.mesh.rotation.y;
+        p.mesh.position.set(
+          p.base.x + Math.sin(a) * (dz / 2),
+          p.base.y,
+          p.base.z - dz / 2 + Math.cos(a) * (dz / 2),
+        );
+        continue;
       }
       if (p.anim && p.anim !== 'head' && p.anim !== 'none') {
         // Pivot au sommet de la pièce plutôt qu'en son centre.

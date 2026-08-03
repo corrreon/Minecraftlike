@@ -36,6 +36,8 @@ export interface WorldMeta {
   dimension?: Dimension;
   /** Position de retour dans l'Overworld, mémorisée en entrant dans un portail. */
   returnPos?: [number, number, number];
+  /** Le dragon de l'End a déjà été vaincu : il ne réapparaît pas. */
+  dragonSlain?: boolean;
 }
 
 export interface PlayerSave {

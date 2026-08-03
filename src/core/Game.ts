@@ -143,6 +143,11 @@ export class Game {
   private portalCooldown = 0;
   /** Contenus de conteneurs, rangés par dimension. */
   private dimEntities = new Map<Dimension, Map<string, FurnaceState | Container>>();
+  /** Combat de l'End : le boss, ses cristaux, et le délai avant son entrée. */
+  private dragon: Mob | null = null;
+  private dragonSpawnDelay = 4;
+  private crystals = 0;
+  private crystalTimer = 0;
   /** Coffres de structures déjà remplis, pour ne pas les regarnir. */
   private lootedChests = new Set<string>();
   /** Mode « oneblock » : compteur de blocs cassés et phase courante. */
@@ -1733,6 +1738,11 @@ export class Game {
     this.mobs = [];
     this.drops = [];
     this.lootedChests.clear();
+    this.dragon = null;
+    this.dragonSpawnDelay = 4;
+    this.crystals = 0;
+    this.crystalTimer = 0;
+    this.hud.setBoss(null);
   }
 
   /**
@@ -1972,24 +1982,127 @@ export class Game {
     const len = Math.hypot(dx, dz) || 1;
     m.velocity.x += (dx / len) * 5.5;
     m.velocity.z += (dz / len) * 5.5;
-    m.velocity.y = Math.max(m.velocity.y, 3.4);
+    if (!m.def.orbit) {
+      // Un boss de deux cents points de vie ne se fait pas bousculer.
+      m.velocity.y = Math.max(m.velocity.y, 3.4);
+    } else {
+      m.velocity.x -= (dx / len) * 5.5;
+      m.velocity.z -= (dz / len) * 5.5;
+    }
     if (held?.item.durability) this.inventory.damageSelected(1);
     if (killed) {
       for (const d of m.rollDrops()) this.spawnDrop(d.x, d.y, d.z, d.stack);
       this.player.addXp(m.def.xp);
+      if (m.def.orbit) this.onDragonSlain(m);
     }
   }
+
+  // --- Combat du dragon ----------------------------------------------------
+
+  /**
+   * Le dragon apparaît la première fois qu'on arrive dans l'End, et une seule
+   * fois par monde. Tant qu'un cristal tient sur sa colonne, il se régénère.
+   */
+  private updateDragonFight(dt: number): void {
+    if (this.dimension !== 'end') { this.dragon = null; return; }
+
+    if (!this.dragon && !this.save?.meta.dragonSlain && this.mobsEnabled) {
+      this.dragonSpawnDelay -= dt;
+      if (this.dragonSpawnDelay <= 0) {
+        this.dragonSpawnDelay = 12;
+        // On l'amène par le nord de l'île, en altitude.
+        this.dragon = new Mob('ender_dragon', 0.5, 96, -44.5, this.env, (Math.random() * 1e9) | 0);
+        this.mobs.push(this.dragon);
+        this.entityGroup.add(this.dragon.group);
+        this.hud.toast('Le dragon de l’End vous a vu.', 'warn', 5000);
+        this.audio.mobAmbient('ender_dragon');
+      }
+    }
+
+    const d = this.dragon;
+    if (!d) { this.hud.setBoss(null); return; }
+    if (d.dead) { this.dragon = null; this.hud.setBoss(null); return; }
+
+    // Recomptage périodique : balayer l'île à chaque image coûterait trop cher.
+    this.crystalTimer -= dt;
+    if (this.crystalTimer <= 0) {
+      this.crystalTimer = 2.5;
+      this.crystals = this.countCrystals();
+    }
+    if (this.crystals > 0 && d.health < d.def.health) {
+      // Chaque cristal rend deux points par seconde.
+      d.health = Math.min(d.def.health, d.health + this.crystals * 2 * dt);
+      if (this.settings.particles && Math.random() < dt * 6) {
+        this.particles.puff(d.position.x, d.position.y + 3, d.position.z, 0xc79cf0, 2);
+      }
+    }
+    this.hud.setBoss({
+      name: d.def.name,
+      ratio: Math.max(0, d.health / d.def.health),
+      note: this.crystals > 1 ? `${this.crystals} cristaux le régénèrent`
+        : this.crystals === 1 ? 'un cristal le régénère'
+          : 'plus aucun cristal',
+    });
+  }
+
+  /**
+   * Cristaux encore debout au-dessus de l'île centrale.
+   *
+   * Un cristal est toujours le bloc le plus haut de sa colonne : on interroge
+   * la carte de hauteur du chunk plutôt que de balayer trente niveaux, ce qui
+   * ramène le comptage de trois cent mille lectures à onze mille.
+   */
+  private countCrystals(): number {
+    let n = 0;
+    const R = 52;
+    for (let z = -R; z <= R; z++) {
+      for (let x = -R; x <= R; x++) {
+        if (x * x + z * z > R * R) continue;
+        const c = this.world.getChunk(floorDiv(x, CHUNK_X), floorDiv(z, CHUNK_Z));
+        if (!c || c.state !== ChunkState.Ready) continue;
+        const top = c.height[mod(x, CHUNK_X) + mod(z, CHUNK_Z) * CHUNK_X];
+        if (top > 60 && this.world.getBlock(x, top, z) === B.end_crystal) n++;
+      }
+    }
+    return n;
+  }
+
+  /** Mort du dragon : explosion, œuf, portail de sortie, et c'est fini. */
+  private onDragonSlain(m: Mob): void {
+    this.dragon = null;
+    this.hud.setBoss(null);
+    if (this.save) this.save.meta.dragonSlain = true;
+    this.audio.explosion();
+    if (this.settings.particles) this.particles.explosion(m.position.x, m.position.y + 2, m.position.z, 6);
+
+    // Piédestal au centre de l'île, surmonté de l'œuf.
+    let top = 0;
+    for (let y = WORLD_HEIGHT - 2; y > 4; y--) if (this.world.getBlock(0, y, 0) !== 0) { top = y; break; }
+    if (top > 0) {
+      for (let dz = -2; dz <= 2; dz++)
+        for (let dx = -2; dx <= 2; dx++) {
+          const h = Math.abs(dx) + Math.abs(dz) <= 1 ? 3 : Math.abs(dx) + Math.abs(dz) <= 2 ? 2 : 1;
+          for (let dy = 1; dy <= h; dy++) this.setBlock(dx, top + dy, dz, B.obsidian);
+        }
+      this.setBlock(0, top + 4, 0, B.dragon_egg);
+    }
+    this.player.addXp(200);
+    this.hud.toast('Le dragon s’effondre. L’œuf est à vous.', 'info', 6000);
+  }
+
 
   private updateEntities(dt: number, active: boolean): void {
     if (!active) return;
     const maxDist = this.settings.entityDistance;
-    const dayFactor = this.skyState.dayFactor;
+    // Hors de l'Overworld, le cycle jour/nuit ne s'applique pas : sans ça, les
+    // créatures du Nether et de l'End s'assombrissaient au gré de l'heure.
+    const dayFactor = this.dimension === 'overworld' ? this.skyState.dayFactor : 1;
     this.assignGuardTargets();
 
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
       const dist = m.position.distanceTo(this.player.position);
-      if (m.dead || dist > 110) {
+      if (m.dead || (dist > 110 && !m.def.orbit)) {
         this.entityGroup.remove(m.group);
         m.dispose();
         this.mobs.splice(i, 1);
@@ -2030,6 +2143,8 @@ export class Game {
         this.drops.splice(i, 1);
       }
     }
+
+    this.updateDragonFight(dt);
 
     this.mobTimer += dt;
     if (this.mobTimer >= MOB_TICK) {

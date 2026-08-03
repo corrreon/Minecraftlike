@@ -371,6 +371,52 @@ img {
   }
 }
 
+/* --- Barre de boss -------------------------------------------------------- */
+
+.boss {
+  position: absolute;
+  top: calc(14px * var(--gui));
+  left: 50%;
+  transform: translateX(-50%);
+  width: min(460px, 62vw);
+  text-align: center;
+  pointer-events: none;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.85);
+}
+
+.boss.hidden {
+  display: none;
+}
+
+.boss-name {
+  font-size: calc(13px * var(--gui));
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #e8dcff;
+  margin-bottom: calc(4px * var(--gui));
+}
+
+.boss-track {
+  height: calc(9px * var(--gui));
+  border: 1px solid rgba(200, 170, 255, 0.55);
+  background: rgba(10, 8, 18, 0.75);
+  overflow: hidden;
+}
+
+.boss-track > i {
+  display: block;
+  height: 100%;
+  width: 100%;
+  background: linear-gradient(90deg, #8a3ad8, #d84a8c);
+  transition: width 0.18s linear;
+}
+
+.boss-note {
+  margin-top: calc(3px * var(--gui));
+  font-size: calc(10px * var(--gui));
+  color: #b9a8d8;
+}
+
 #hit-vignette {
   position: absolute;
   inset: 0;

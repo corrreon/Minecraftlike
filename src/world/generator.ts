@@ -474,11 +474,14 @@ export class TerrainGenerator {
           if (y < 4 || y >= WORLD_HEIGHT) continue;
           blocks[voxelIndex(lx, y, lz)] = B.end_stone;
         }
-        // Colonnes d'obsidienne dressées sur l'île centrale : le décor du combat.
+        // Colonnes d'obsidienne dressées sur l'île centrale, chacune couronnée
+        // d'un cristal : c'est le décor — et l'enjeu — du combat.
         if (core > 0.55 && rnd() < 0.004) {
-          for (let y = top + 1; y <= top + 8 + Math.floor(rnd() * 12); y++) {
+          const height = 9 + Math.floor(rnd() * 12);
+          for (let y = top + 1; y <= top + height; y++) {
             if (y < WORLD_HEIGHT) blocks[voxelIndex(lx, y, lz)] = B.obsidian;
           }
+          if (top + height + 2 < WORLD_HEIGHT) blocks[voxelIndex(lx, top + height + 2, lz)] = B.end_crystal;
         }
         // Veines de purpur dans les îles lointaines.
         if (isle > 0.2 && rnd() < 0.02) blocks[voxelIndex(lx, Math.max(4, top), lz)] = B.purpur_block;

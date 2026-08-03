@@ -45,7 +45,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   et **coffres au trésor** enfouis sous les plages. Chaque chunk reconstruit
   intégralement la structure qui le touche et découpe ce qui dépasse : aucune
   couture quand on arrive par le bord.
-- **~190 blocs** : roches et variantes polies, minerais, quatre essences de
+- **~192 blocs** : roches et variantes polies, minerais, quatre essences de
   bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
   lumière, matériaux du Nether et de l'End, et une palette de construction
   complète — laine, **béton**, **terre cuite** et **verre teinté** dans les
@@ -62,7 +62,11 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   On y trouve des **forteresses** en briques du Nether : pont à arches, tours,
   salle des braises, et la salle du portail.
 - **End** : une île de pierre de l'End hérissée de colonnes d'obsidienne, puis
-  un archipel dispersé au-dessus du vide.
+  un archipel dispersé au-dessus du vide. Le **dragon** y attend : il tourne en
+  orbite au-dessus de l'île, pique sur le joueur, et **se régénère tant qu'un
+  cristal reste debout** au sommet d'une colonne. Barre de boss à l'écran,
+  décompte des cristaux, et à sa mort un piédestal d'obsidienne surmonté de
+  l'**œuf de dragon**. Il ne réapparaît pas.
 - **Portails** : un cadre d'obsidienne allumé au **briquet** ouvre le passage
   vers le Nether (les coordonnées y sont divisées par huit, le raccourci est
   donc bien réel). Le **portail de l'End** attend dans la forteresse : douze
@@ -138,7 +142,8 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   (minerais, verre, briques, cuisson des viandes) ; **coffres** de 27 cases.
 - **Créatures** : cochon, vache, mouton, poule, zombie, squelette, creeper,
   araignée, **villageois**, **idiot du village**, **golem de fer**, **kraken**,
-  **bloop**, **braise** et **enderman** — modèles articulés animés, IA
+  **bloop**, **braise**, **enderman** et le **dragon de l'End** — modèles
+  articulés animés (ailes battantes et queue ondulante pour le dragon), IA
   d'errance et de poursuite, apparition selon la lumière, l'heure et la
   dimension, butins, expérience. Les creepers **explosent** et creusent le
   terrain, le golem prend pour cible la créature hostile la plus proche et
@@ -237,7 +242,6 @@ Quelques points de conception :
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
 - Les fluides ne s'écoulent pas ; l'eau et la lave sont statiques.
-- L'End n'a pas encore de boss : l'île est là, le dragon manque.
 - Les dalles sont le seul bloc non cubique : escaliers, murets et clôtures
   demanderaient au mailleur de gérer des formes composées de plusieurs boîtes.
 - Le lancer de rayon vise le voxel entier : on peut cibler une dalle en visant

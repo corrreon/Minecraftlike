@@ -171,6 +171,12 @@ export class AudioEngine {
   }
 
   mobAmbient(kind: string): void {
+    // Le dragon rugit : très grave, long, et deux fois plus fort que le reste.
+    if (kind === 'ender_dragon') {
+      this.voice(52 * (0.95 + Math.random() * 0.12), 1.8, 'sawtooth', 0.32, 0.35);
+      this.voice(78, 1.2, 'triangle', 0.18, 0.5);
+      return;
+    }
     const base = kind === 'chicken' ? 900 : kind === 'cow' ? 150 : kind === 'pig' ? 260 : kind === 'zombie' ? 130 : 350;
     this.voice(base * (0.9 + Math.random() * 0.25), 0.5, kind === 'zombie' ? 'sawtooth' : 'triangle', 0.14, 0.8);
   }

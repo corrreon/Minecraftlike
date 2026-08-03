@@ -32,6 +32,10 @@ export class Hud {
   private toastStack: HTMLElement;
   private vignette: HTMLElement;
   private touchLayer: HTMLElement;
+  private bossEl!: HTMLElement;
+  private bossName!: HTMLElement;
+  private bossFill!: HTMLElement;
+  private bossNote!: HTMLElement;
   private slots: HTMLElement[] = [];
   private lastVersion = -1;
   private lastSelected = -1;
@@ -59,6 +63,28 @@ export class Hud {
     }
 
     this.touchLayer = el('div', 'touch-ui', this.root);
+
+    // Barre de boss, cachée tant qu'aucun combat n'est en cours.
+    this.bossEl = el('div', 'boss hidden', this.root);
+    this.bossName = el('div', 'boss-name', this.bossEl);
+    const track = el('div', 'boss-track', this.bossEl);
+    this.bossFill = el('i', undefined, track);
+    this.bossNote = el('div', 'boss-note', this.bossEl);
+  }
+
+  /**
+   * Affiche ou masque la barre du boss. `null` la retire.
+   */
+  setBoss(state: { name: string; ratio: number; note?: string } | null): void {
+    if (!state) {
+      if (!this.bossEl.classList.contains('hidden')) this.bossEl.classList.add('hidden');
+      return;
+    }
+    this.bossEl.classList.remove('hidden');
+    if (this.bossName.textContent !== state.name) this.bossName.textContent = state.name;
+    this.bossFill.style.width = `${Math.round(Math.max(0, Math.min(1, state.ratio)) * 100)}%`;
+    const note = state.note ?? '';
+    if (this.bossNote.textContent !== note) this.bossNote.textContent = note;
   }
 
   show(v: boolean): void {

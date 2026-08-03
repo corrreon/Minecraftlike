@@ -89,6 +89,9 @@ for (const b of BLOCKS) {
   if (b.key === 'bedrock') continue;
   // `_slab_top` n'est qu'une variante de pose : un seul objet par matériau.
   if (b.key.endsWith('_slab_top')) continue;
+  // L'œuf de dragon est enregistré tout en bas du fichier : les identifiants
+  // d'objets sont écrits dans les sauvegardes, on n'insère jamais au milieu.
+  if (b.key === 'dragon_egg') continue;
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -247,6 +250,12 @@ for (const p of ARMOR_PIECES) {
     armor: { slot: p.slot, defense: [3, 8, 6, 3][p.slot] + 1 },
   });
 }
+
+// Ajouté ici, en queue de registre, pour ne décaler aucun identifiant existant.
+item('dragon_egg', {
+  name: 'Œuf de dragon', maxStack: 1, block: BLOCK_BY_KEY.get('dragon_egg')!.id,
+  icon: 'block', color: 0x6a3a9a,
+});
 
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];

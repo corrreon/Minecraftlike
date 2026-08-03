@@ -875,6 +875,35 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
     }
   },
 
+  end_crystal: (t, r) => {
+    // Losange facetté, sur fond transparent : le cristal flotte.
+    t.clear();
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const dx = Math.abs(x - TILE / 2 + 0.5) / (TILE / 2);
+        const dy = Math.abs(y - TILE / 2 + 0.5) / (TILE / 2);
+        const d = dx + dy;
+        if (d > 0.95) continue;
+        // Facettes : la teinte bascule d'un quadrant à l'autre.
+        const facet = (x < TILE / 2 ? 1.12 : 0.86) * (y < TILE / 2 ? 1.06 : 0.92);
+        const core = d < 0.35 ? 1.5 : 1;
+        t.set(x, y, rgb(0xc79cf0), 235, facet * core * (0.7 + r() * 0.2));
+        t.setHeight(x, y, 1 - d);
+      }
+  },
+  dragon_egg: (t, r) => {
+    grainy(t, rgb(0x120a1c), r, 0.4, 5);
+    // Marbrures violettes, comme des veines sous la coquille.
+    const n = tileNoise(7, r);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const v = n[y * TILE + x];
+        if (v > 0.72) { t.set(x, y, rgb(0x6a3a9a), 255, 0.8 + v * 0.5); t.setHeight(x, y, 0.9); }
+        else if (v < 0.25) { t.mul(x, y, 0.6); t.setHeight(x, y, 0.2); }
+      }
+    speckle(t, rgb(0xa87ad8), r, 12, 1.2);
+  },
+
   torch: (t, r) => {
     t.clear();
     for (let y = 6; y < 16; y++) {
@@ -910,6 +939,7 @@ function surfaceOf(name: string): { relief: number; roughness: number } {
   if (name === 'netherite_block' || name === 'ancient_debris') return { relief: 0.7, roughness: 0.3 };
   if (name === 'netherrack' || name === 'magma') return { relief: 1.4, roughness: 0.95 };
   if (name === 'end_stone' || name.startsWith('end_portal_frame')) return { relief: 0.8, roughness: 0.85 };
+  if (name === 'end_crystal' || name === 'dragon_egg') return { relief: 0.6, roughness: 0.15 };
   if (name.endsWith('_ore')) return { relief: 1.3, roughness: 0.45 };
   if (name === 'cobblestone' || name === 'mossy_cobblestone' || name === 'gravel') return { relief: 1.5, roughness: 0.95 };
   if (name === 'bricks' || name === 'stone_bricks') return { relief: 1.2, roughness: 0.9 };
