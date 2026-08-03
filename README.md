@@ -1,9 +1,10 @@
 # VoxelCraft
 
 Un bac à sable voxel façon Minecraft, entièrement jouable dans le navigateur.
-Monde infini généré procéduralement, survie, artisanat, créatures, cycle
-jour/nuit, météo et rendu avancé — le tout sans aucun asset externe : textures,
-icônes et sons sont **synthétisés au démarrage**.
+Monde infini généré procéduralement, villages, mines, **Nether** et **End**,
+survie, artisanat, créatures, cycle jour/nuit, météo et rendu avancé — le tout
+sans aucun asset externe : textures, icônes et sons sont **synthétisés au
+démarrage**.
 
 Pile technique : **TypeScript + Vite + Three.js (WebGL 2 / GLSL ES 3.0)**,
 avec un pool de **Web Workers** pour la génération de terrain et le maillage.
@@ -37,12 +38,45 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   grand sapin, acajou, acacia, chêne de marais), cactus, cannes à sucre,
   fleurs, fougères, champignons, citrouilles. Les structures qui débordent d'un
   chunk sont reportées sur les chunks voisins.
-- **~175 blocs** : roches et variantes polies, minerais, quatre essences de
+- **Structures** ancrées sur une grille de régions : **villages** tous les
+  100 blocs (puits, cinq à huit maisons meublées, sentiers, lampadaires et un
+  **champ de citrouilles** clôturé, palette selon le biome), **mines
+  abandonnées** sur deux niveaux, **épaves** échouées, **portails engloutis**
+  et **coffres au trésor** enfouis sous les plages. Chaque chunk reconstruit
+  intégralement la structure qui le touche et découpe ce qui dépasse : aucune
+  couture quand on arrive par le bord.
+- **~190 blocs** : roches et variantes polies, minerais, quatre essences de
   bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
-  lumière, et une palette de construction complète — laine, **béton**, **terre
-  cuite** et **verre teinté** dans les 16 teintes, plus **10 familles de
-  dalles**.
-- **Monde superplat** proposé à la création, pour bâtir sans terrain qui gêne.
+  lumière, matériaux du Nether et de l'End, et une palette de construction
+  complète — laine, **béton**, **terre cuite** et **verre teinté** dans les
+  16 teintes, plus **10 familles de dalles**.
+- **Trois types de monde** au choix à la création : normal, **superplat** pour
+  bâtir sans terrain qui gêne, et **oneblock**.
+
+### Dimensions
+
+- **Nether** : une caverne close entre deux couches de bedrock, sculptée dans du
+  plein par un bruit 3D seuillé — d'où les voûtes, les surplombs et les puits
+  verticaux. Mers de lave, sable des âmes sur leurs rives, pierre lumineuse
+  accrochée aux plafonds, quartz partout et **débris antiques** en profondeur.
+  On y trouve des **forteresses** en briques du Nether : pont à arches, tours,
+  salle des braises, et la salle du portail.
+- **End** : une île de pierre de l'End hérissée de colonnes d'obsidienne, puis
+  un archipel dispersé au-dessus du vide.
+- **Portails** : un cadre d'obsidienne allumé au **briquet** ouvre le passage
+  vers le Nether (les coordonnées y sont divisées par huit, le raccourci est
+  donc bien réel). Le **portail de l'End** attend dans la forteresse : douze
+  cadres en anneau, à garnir d'**yeux de l'Ender**.
+- Chaque dimension a son propre relief, sa propre ambiance — pas de soleil,
+  donc pas d'ombres portées ni de rayons crépusculaires — et ses propres
+  modifications sauvegardées.
+
+### Modes de jeu particuliers
+
+- **Oneblock** : le monde est entièrement vide, à l'exception d'un unique bloc
+  qui repousse à chaque fois qu'on le casse. Six phases — Prairie, Forêt,
+  Désert, Océan, Cavernes, Abysse — avec leurs tables de blocs, leurs créatures
+  et leurs coffres. Tomber dans le vide ramène sur l'île au lieu de tuer.
 
 ### Rendu
 
@@ -92,14 +126,25 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **90 recettes** (outils et armures des 5 matériaux, blocs compacts, teinture
-  de la laine, TNT, papier, livres…), avec ingrédients alternatifs.
+  **110 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  de la laine, TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
+  alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
+  bout : les débris antiques se fondent en éclats, quatre éclats et quatre
+  lingots d'or donnent un lingot, et l'équipement en diamant s'améliore.
+- **Coffres de structures** : leur contenu est tiré depuis leur position, sans
+  jamais être stocké — le même coffre rend donc toujours le même butin, même
+  après un rechargement du monde.
 - **Four** fonctionnel : combustion, progression de cuisson, table de fusion
   (minerais, verre, briques, cuisson des viandes) ; **coffres** de 27 cases.
 - **Créatures** : cochon, vache, mouton, poule, zombie, squelette, creeper,
-  araignée — modèles articulés animés, IA d'errance et de poursuite, apparition
-  selon la lumière et l'heure, butins, expérience. Les creepers **explosent** et
-  creusent le terrain.
+  araignée, **villageois**, **idiot du village**, **golem de fer**, **kraken**,
+  **bloop**, **braise** et **enderman** — modèles articulés animés, IA
+  d'errance et de poursuite, apparition selon la lumière, l'heure et la
+  dimension, butins, expérience. Les creepers **explosent** et creusent le
+  terrain, le golem prend pour cible la créature hostile la plus proche et
+  riposte si on le frappe, le kraken nage et s'échoue hors de l'eau, le bloop
+  n'avance que par bonds, la braise ne se pose jamais et l'enderman se dérobe
+  d'un pas de côté dès qu'on le touche.
 - **Survie** : vie, faim et saturation, souffle sous l'eau, dégâts de chute, de
   lave, de cactus et de famine, régénération, armure et réduction de dégâts,
   écran de mort et réapparition.
@@ -119,7 +164,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Règles du monde** : `/figer` bloque le cycle jour/nuit, `/mobs off` coupe
   l'apparition des créatures.
 - **Console de commandes** : `/gamemode`, `/tp`, `/time`, `/give`, `/meteo`,
-  `/seed`, `/tuer`, `/aide`.
+  `/seed`, `/tuer`, `/dimension`, `/aide`.
 - **Audio 100 % procédural** (Web Audio) : impacts filtrés par matériau, pas,
   cris de créatures, explosions, nappe d'ambiance jour/nuit.
 - **Options** : distance de rendu, FOV, échelle de résolution et d'interface,
@@ -144,6 +189,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 | Clic droit | Poser un bloc / utiliser / ouvrir un conteneur |
 | Molette, `1`-`9` | Changer d'objet |
 | Clic milieu | Prendre le bloc visé dans la barre rapide |
+| Clic droit avec un briquet | Allumer un cadre d'obsidienne |
 | `E` | Inventaire |
 | `Q` | Jeter l'objet tenu |
 | `F` / `F5` | Vue à la troisième personne |
@@ -158,11 +204,11 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 ```
 src/
   core/        constantes, entrées (clavier/souris/tactile), réglages, boucle de jeu
-  world/       registre des blocs, bruits, biomes, générateur, mailleur, monde, pool de workers
+  world/       registre des blocs, bruits, biomes, générateur, structures, mailleur, monde, pool de workers
   workers/     worker polyvalent (génération + maillage)
   render/      atlas procédural, matériaux GLSL 3, ciel, post-traitement, particules, streaming
   player/      physique AABB, lancer de rayon DDA, état et vitalité du joueur
-  items/       registre d'objets, recettes, inventaire et conteneurs
+  items/       registre d'objets, recettes, tables de butin, inventaire et conteneurs
   entities/    créatures (modèles, IA) et objets au sol
   ui/          HUD, écrans, icônes générées, feuille de style
   audio/       synthèse sonore Web Audio
@@ -191,6 +237,7 @@ Quelques points de conception :
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
 - Les fluides ne s'écoulent pas ; l'eau et la lave sont statiques.
+- L'End n'a pas encore de boss : l'île est là, le dragon manque.
 - Les dalles sont le seul bloc non cubique : escaliers, murets et clôtures
   demanderaient au mailleur de gérer des formes composées de plusieurs boîtes.
 - Le lancer de rayon vise le voxel entier : on peut cibler une dalle en visant
