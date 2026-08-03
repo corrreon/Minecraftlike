@@ -1,7 +1,7 @@
 /** Pool de workers avec files séparées pour la génération et le maillage. */
 
 import type { MeshResult } from './mesher';
-import type { WorldType } from './generator';
+import type { GenKind } from './generator';
 
 interface GenResponse {
   type: 'gen';
@@ -46,7 +46,7 @@ export class WorkerPool {
   private nextJob = 1;
   private busyCount = 0;
 
-  constructor(seed: number, worldType: WorldType = 'normal', size = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1))) {
+  constructor(seed: number, worldType: GenKind = 'normal', size = Math.max(2, Math.min(8, (navigator.hardwareConcurrency || 4) - 1))) {
     for (let i = 0; i < size; i++) {
       const w = new Worker(new URL('../workers/chunk.worker.ts', import.meta.url), { type: 'module' });
       w.onmessage = (ev: MessageEvent<Response>) => this.onMessage(w, ev.data);

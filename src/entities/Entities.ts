@@ -28,7 +28,8 @@ import { mulberry32 } from '../world/noise';
 export type MobKind =
   | 'pig' | 'cow' | 'sheep' | 'chicken'
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
-  | 'villager' | 'iron_golem' | 'kraken' | 'bloop';
+  | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
+  | 'blaze' | 'enderman';
 
 interface MobPart {
   name: string;
@@ -50,6 +51,12 @@ interface MobTraits {
   retaliates?: boolean;
   /** Recul infligé à la cible. */
   knockback?: number;
+  /** Vole en permanence : ni gravité, ni saut. */
+  flies?: boolean;
+  /** Change d'avis sans arrêt : l'idiot du village ne tient pas en place. */
+  erratic?: boolean;
+  /** Se téléporte à courte distance quand on l'attaque. */
+  blinks?: boolean;
 }
 
 interface MobDef extends MobTraits {
@@ -217,6 +224,58 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 't6', size: [0.18, 0.9, 0.18], offset: [0.3, 0.3, 0.4], color: 0x5b2f6b, anim: 'legBL' },
     ],
     { aquatic: true, knockback: 7 }),
+  /**
+   * L'idiot du village : il porte un seau sur la tête, court dans tous les sens
+   * et ne suit jamais bien longtemps la même idée. Inoffensif.
+   */
+  village_idiot: M('Idiot du village', false, 20, 2.6, 0.6, 1.95, 0, 0, 3,
+    [{ key: 'emerald', min: 0, max: 1 }, { key: 'brown_mushroom', min: 1, max: 2 }],
+    [
+      { name: 'head', size: [0.5, 0.5, 0.5], offset: [0, 1.62, 0], color: 0xb08769, anim: 'head' },
+      { name: 'bucket', size: [0.58, 0.4, 0.58], offset: [0, 1.96, 0], color: 0xb9bcc0, anim: 'head' },
+      { name: 'nose', size: [0.16, 0.24, 0.16], offset: [0, 1.54, -0.31], color: 0xa07257, anim: 'head' },
+      { name: 'robe', size: [0.52, 0.78, 0.3], offset: [0, 1.0, 0], color: 0x8a7a3a },
+      { name: 'patch', size: [0.2, 0.2, 0.32], offset: [-0.14, 0.9, 0], color: 0x5f6b8a },
+      { name: 'armL', size: [0.2, 0.6, 0.24], offset: [-0.36, 1.06, -0.06], color: 0x8a7a3a, anim: 'armL' },
+      { name: 'armR', size: [0.2, 0.6, 0.24], offset: [0.36, 1.06, -0.06], color: 0x8a7a3a, anim: 'armR' },
+      { name: 'legL', size: [0.22, 0.62, 0.22], offset: [-0.13, 0.31, 0], color: 0x6a5a2a, anim: 'legFL' },
+      { name: 'legR', size: [0.22, 0.62, 0.22], offset: [0.13, 0.31, 0], color: 0x6a5a2a, anim: 'legFR' },
+    ],
+    { erratic: true }),
+
+  /** Braise : elle flotte au-dessus de la lave et ne craint pas le feu. */
+  blaze: M('Braise', true, 20, 2.6, 0.6, 1.8, 5, 24, 10,
+    [{ key: 'blaze_rod', min: 1, max: 2 }, { key: 'gunpowder', min: 0, max: 1 }],
+    [
+      { name: 'head', size: [0.5, 0.5, 0.5], offset: [0, 1.4, 0], color: 0xf2c832, anim: 'head' },
+      { name: 'eyeL', size: [0.12, 0.1, 0.06], offset: [-0.13, 1.46, -0.27], color: 0x3a2a10, anim: 'head' },
+      { name: 'eyeR', size: [0.12, 0.1, 0.06], offset: [0.13, 1.46, -0.27], color: 0x3a2a10, anim: 'head' },
+      { name: 'core', size: [0.3, 0.5, 0.3], offset: [0, 0.85, 0], color: 0xffe08a },
+      // Les douze bâtons tournent autour du corps.
+      { name: 'r1', size: [0.12, 0.7, 0.12], offset: [-0.36, 1.0, 0], color: 0xe8a01a, anim: 'armL' },
+      { name: 'r2', size: [0.12, 0.7, 0.12], offset: [0.36, 1.0, 0], color: 0xe8a01a, anim: 'armR' },
+      { name: 'r3', size: [0.12, 0.6, 0.12], offset: [0, 0.9, -0.36], color: 0xf2b02a, anim: 'legFL' },
+      { name: 'r4', size: [0.12, 0.6, 0.12], offset: [0, 0.9, 0.36], color: 0xf2b02a, anim: 'legFR' },
+      { name: 'r5', size: [0.1, 0.5, 0.1], offset: [-0.26, 0.6, -0.26], color: 0xd88a10, anim: 'legBL' },
+      { name: 'r6', size: [0.1, 0.5, 0.1], offset: [0.26, 0.6, 0.26], color: 0xd88a10, anim: 'legBR' },
+    ],
+    { flies: true, knockback: 3 }),
+
+  /** Enderman : long, silencieux, et se dérobe dès qu'on le touche. */
+  enderman: M('Enderman', true, 40, 3.2, 0.6, 2.9, 6, 20, 8,
+    [{ key: 'ender_pearl', min: 1, max: 2 }],
+    [
+      { name: 'head', size: [0.5, 0.5, 0.5], offset: [0, 2.6, 0], color: 0x100f14, anim: 'head' },
+      { name: 'eyeL', size: [0.16, 0.08, 0.05], offset: [-0.13, 2.66, -0.27], color: 0xd8a8ff, anim: 'head' },
+      { name: 'eyeR', size: [0.16, 0.08, 0.05], offset: [0.13, 2.66, -0.27], color: 0xd8a8ff, anim: 'head' },
+      { name: 'body', size: [0.42, 0.9, 0.26], offset: [0, 1.9, 0], color: 0x16151c },
+      { name: 'armL', size: [0.14, 1.3, 0.14], offset: [-0.28, 1.7, 0], color: 0x100f14, anim: 'armL' },
+      { name: 'armR', size: [0.14, 1.3, 0.14], offset: [0.28, 1.7, 0], color: 0x100f14, anim: 'armR' },
+      { name: 'legL', size: [0.14, 1.4, 0.14], offset: [-0.11, 0.7, 0], color: 0x16151c, anim: 'legFL' },
+      { name: 'legR', size: [0.14, 1.4, 0.14], offset: [0.11, 0.7, 0], color: 0x16151c, anim: 'legFR' },
+    ],
+    { blinks: true, knockback: 5 }),
+
   /** Le « bloop » : une masse gélatineuse qui rebondit et colle aux basques. */
   bloop: M('Bloop', true, 14, 2.6, 0.85, 0.85, 3, 18, 4,
     [{ key: 'clay_ball', min: 1, max: 3 }, { key: 'gunpowder', min: 0, max: 1 }],
@@ -281,6 +340,9 @@ export class Mob {
   threat: Mob | null = null;
   /** Phase de rebond, pour les créatures qui sautillent. */
   private hopTimer = 0;
+  /** Téléportation demandée par un coup reçu (enderman). */
+  private blinkPending = false;
+  private blinkCooldown = 0;
   private walkPhase = 0;
   private parts: { mesh: Mesh; anim: MobPart['anim']; base: Vector3 }[] = [];
   material: ShaderMaterial;
@@ -363,15 +425,24 @@ export class Mob {
       // Errance.
       this.wanderTimer -= dt;
       if (this.wanderTimer <= 0) {
-        this.wanderTimer = 2 + this.rnd() * 5;
-        this.wanderMove = this.rnd() < 0.65;
-        this.wanderYaw += (this.rnd() - 0.5) * 2.4;
+        // L'idiot repart dans une autre direction toutes les demi-secondes.
+        this.wanderTimer = d.erratic ? 0.3 + this.rnd() * 0.9 : 2 + this.rnd() * 5;
+        this.wanderMove = this.rnd() < (d.erratic ? 0.9 : 0.65);
+        this.wanderYaw += (this.rnd() - 0.5) * (d.erratic ? 5 : 2.4);
       }
       if (this.wanderMove) {
         this.yaw = this.wanderYaw;
         wishX = Math.sin(this.wanderYaw) * 0.45;
         wishZ = Math.cos(this.wanderYaw) * 0.45;
       }
+    }
+
+    // --- Téléportation ---
+    if (this.blinkCooldown > 0) this.blinkCooldown -= dt;
+    if (this.blinkPending && this.blinkCooldown <= 0) {
+      this.blinkPending = false;
+      this.blinkCooldown = 1.4;
+      this.blink(world);
     }
 
     // --- Physique ---
@@ -385,7 +456,15 @@ export class Mob {
     this.velocity.x += (wishX * speed - this.velocity.x) * Math.min(1, (grounded ? 3 : 9) * dt);
     this.velocity.z += (wishZ * speed - this.velocity.z) * Math.min(1, (grounded ? 3 : 9) * dt);
 
-    if (d.aquatic) {
+    if (d.flies) {
+      // Vol libre : la créature vise l'altitude de sa cible, et s'écarte du sol.
+      const want = this.aggro ? focus.y + 1.2 : this.position.y + Math.sin(this.age * 0.8) * 1.5;
+      let climb = clampNum(want - this.position.y, -1, 1);
+      // Quelque chose juste sous les pieds — roche ou lave : on prend de
+      // l'altitude, une braise ne se pose jamais.
+      if (blockUnder(world, this.position) !== 0) climb = 1;
+      this.velocity.y += (climb * d.speed - this.velocity.y) * Math.min(1, 5 * dt);
+    } else if (d.aquatic) {
       // Nage : flottabilité neutre dans l'eau, chute lourde à l'air libre.
       if (this.inWater) {
         const dy = focus.y + 0.5 - this.position.y;
@@ -414,7 +493,7 @@ export class Mob {
     const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: d.width, height: d.height };
     const res = moveBox(world, box, this.velocity, dt, false);
     // Franchit les marches d'un bloc.
-    if ((res.hitX || res.hitZ) && res.onGround && this.jumpCooldown <= 0 && !d.hops) {
+    if ((res.hitX || res.hitZ) && res.onGround && this.jumpCooldown <= 0 && !d.hops && !d.flies) {
       this.velocity.y = 7.2;
       this.jumpCooldown = 0.6;
     }
@@ -476,10 +555,36 @@ export class Mob {
     }
   }
 
+  /** Cherche un sol libre dans un rayon de huit blocs et s'y pose. */
+  private blink(world: World): void {
+    for (let t = 0; t < 12; t++) {
+      const a = this.rnd() * Math.PI * 2;
+      const r = 4 + this.rnd() * 5;
+      const x = Math.floor(this.position.x + Math.cos(a) * r);
+      const z = Math.floor(this.position.z + Math.sin(a) * r);
+      for (let dy = 3; dy >= -3; dy--) {
+        const y = Math.floor(this.position.y) + dy;
+        if (y < 2 || y >= WORLD_HEIGHT - 4) continue;
+        if (!isSolidAt(world, x + 0.5, y - 1, z + 0.5)) continue;
+        let clear = true;
+        for (let h = 0; h < Math.ceil(this.def.height); h++) {
+          if (world.getBlock(x, y + h, z) !== 0) { clear = false; break; }
+        }
+        if (!clear) continue;
+        this.position.set(x + 0.5, y, z + 0.5);
+        this.velocity.set(0, 0, 0);
+        this.group.position.copy(this.position);
+        return;
+      }
+    }
+  }
+
   hurt(amount: number): boolean {
     this.health -= amount;
     this.hurtFlash = 1;
     this.aggro = true;
+    // L'enderman ne encaisse pas : il se dérobe d'un pas de côté.
+    if (this.def.blinks) this.blinkPending = true;
     if (this.health <= 0) {
       this.dead = true;
       return true;
@@ -571,6 +676,16 @@ export class ItemEntity {
     this.mesh.geometry.dispose();
     (this.mesh.material as ShaderMaterial).dispose();
   }
+}
+
+function isSolidAt(world: World, x: number, y: number, z: number): boolean {
+  const b = world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
+  return b > 0 && IS_SOLID[b] !== 0;
+}
+
+/** Bloc immédiatement sous une position, air compris. */
+function blockUnder(world: World, p: Vector3): number {
+  return world.getBlock(Math.floor(p.x), Math.floor(p.y - 0.6), Math.floor(p.z));
 }
 
 function isLiquid(world: World, x: number, y: number, z: number): boolean {

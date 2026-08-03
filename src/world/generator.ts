@@ -17,9 +17,18 @@ import { CHUNK_X, CHUNK_Z, WORLD_HEIGHT, SEA_LEVEL, voxelIndex } from '../core/c
 import { B } from './blocks';
 import { Biome, biomeDef, pickBiome, type TreeKind } from './biomes';
 import { Simplex, fbm2, fbm3, ridged2, mulberry32, hash3, clamp, spline, lerp } from './noise';
-import { emitStructures, villagesNear, type Anchor, type LootKind, type StructCtx } from './structures';
+import { emitStructures, villagesNear, type Anchor, type LootKind, type StructCtx, type StructRealm } from './structures';
 
 export type WorldType = 'normal' | 'flat' | 'oneblock';
+/** Dimension courante. Chacune a son propre relief et sa propre sauvegarde. */
+export type Dimension = 'overworld' | 'nether' | 'end';
+/** Ce que le générateur produit réellement : type de monde ou dimension. */
+export type GenKind = WorldType | 'nether' | 'end';
+
+/** Plafond de roche du Nether : au-dessus, c'est la bedrock du toit. */
+const NETHER_ROOF = 100;
+/** Niveau des mers de lave. */
+export const NETHER_LAVA = 26;
 
 /** Altitude et position du bloc unique du mode « oneblock ». */
 export const ONEBLOCK_X = 0;
@@ -66,8 +75,8 @@ export class TerrainGenerator {
   private colHeight = new Int16Array(CHUNK_X * CHUNK_Z);
   private colBiome = new Uint8Array(CHUNK_X * CHUNK_Z);
 
-  /** Type de monde : relief normal, superplat, ou « oneblock ». */
-  readonly type: WorldType;
+  /** Ce que ce générateur produit : monde normal, superplat, oneblock, Nether ou End. */
+  readonly type: GenKind;
   /** Monde superplat : idéal pour bâtir sans terrain qui gêne. */
   get flat(): boolean {
     return this.type === 'flat';
@@ -80,7 +89,7 @@ export class TerrainGenerator {
    */
   private heightCache = new Map<number, number>();
 
-  constructor(seed: number, type: WorldType = 'normal') {
+  constructor(seed: number, type: GenKind = 'normal') {
     this.seed = seed | 0;
     this.type = type;
     const s = this.seed;
@@ -211,6 +220,8 @@ export class TerrainGenerator {
 
     if (this.type === 'flat') return this.generateFlat(blocks, heightmap, biomes);
     if (this.type === 'oneblock') return this.generateOneblock(blocks, heightmap, biomes, cx, cz);
+    if (this.type === 'nether') return this.generateNether(blocks, heightmap, biomes, cx, cz);
+    if (this.type === 'end') return this.generateEnd(blocks, heightmap, biomes, cx, cz);
 
     this.buildCaveGrid(ox, oz);
 
@@ -354,6 +365,129 @@ export class TerrainGenerator {
     return { blocks, biomes, heightmap, overflow: new Int32Array(0) };
   }
 
+  // --- Nether -------------------------------------------------------------
+
+  /**
+   * Le Nether : une caverne close entre deux couches de bedrock. Le relief
+   * vient d'un bruit 3D seuillé — on creuse dans du plein au lieu d'empiler des
+   * colonnes — d'où les voûtes, les surplombs et les puits verticaux.
+   * Les creux sous le niveau 26 se remplissent de lave.
+   */
+  private generateNether(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
+    const ox = cx * CHUNK_X;
+    const oz = cz * CHUNK_Z;
+    const rnd = mulberry32((cx * 341873128712 + cz * 132897987541 + this.seed + 7717) | 0);
+    biomes.fill(Biome.Badlands);
+
+    for (let lz = 0; lz < CHUNK_Z; lz++) {
+      for (let lx = 0; lx < CHUNK_X; lx++) {
+        const wx = ox + lx, wz = oz + lz;
+        for (let y = 1; y < NETHER_ROOF + 4; y++) {
+          let id = B.netherrack;
+          if (y < NETHER_ROOF) {
+            // Densité : positive = roche. Les grandes cavités viennent du bruit
+            // basse fréquence, les tunnels étroits du bruit ridged.
+            const d = fbm3(this.nCaveC, wx / 90, y / 60, wz / 90, 3);
+            const t = 1 - Math.abs(this.nCaveA.noise3(wx / 70, y / 44, wz / 70));
+            // Le sol et le plafond restent pleins : la dimension est fermée.
+            const edge = Math.min(y / 8, (NETHER_ROOF - y) / 10, 1);
+            const solid = d * 0.75 + (t > 0.86 ? -0.55 : 0.1) + (1 - edge) * 0.9;
+            if (solid < 0.34) {
+              blocks[voxelIndex(lx, y, lz)] = y <= NETHER_LAVA ? B.lava : 0;
+              continue;
+            }
+            // Filons : quartz partout, débris antiques seulement en profondeur.
+            const v = this.nStone.noise3(wx / 18, y / 15, wz / 18);
+            if (v > 0.74) id = B.nether_quartz_ore;
+            else if (y < 34 && v < -0.82) id = B.ancient_debris;
+            else if (v < -0.66 && y < 46) id = B.magma_block;
+          } else {
+            id = B.bedrock;
+          }
+          blocks[voxelIndex(lx, y, lz)] = id;
+        }
+        blocks[voxelIndex(lx, 0, lz)] = B.bedrock;
+        // Toit irrégulier : la dalle de bedrock ne doit pas être une table lisse.
+        for (let y = NETHER_ROOF; y < NETHER_ROOF + 4; y++) {
+          if (hash3(wx, y, wz, this.seed ^ 0x1a7) < (y - NETHER_ROOF) / 4) blocks[voxelIndex(lx, y, lz)] = 0;
+        }
+      }
+    }
+
+    // Habillage : sable des âmes au bord des mers de lave, pierre lumineuse au plafond.
+    for (let lz = 0; lz < CHUNK_Z; lz++) {
+      for (let lx = 0; lx < CHUNK_X; lx++) {
+        for (let y = NETHER_LAVA - 2; y <= NETHER_LAVA + 2; y++) {
+          const i = voxelIndex(lx, y, lz);
+          if (blocks[i] === B.netherrack && blocks[voxelIndex(lx, y + 1, lz)] === 0 && rnd() < 0.35) {
+            blocks[i] = B.soul_sand;
+          }
+        }
+        // Amas de pierre lumineuse accrochés sous les voûtes.
+        if (rnd() < 0.05) {
+          for (let y = NETHER_ROOF - 6; y > 30; y--) {
+            const i = voxelIndex(lx, y, lz);
+            if (blocks[i] !== 0 || blocks[voxelIndex(lx, y + 1, lz)] === 0) continue;
+            blocks[i] = B.glowstone;
+            if (rnd() < 0.6) blocks[voxelIndex(lx, y - 1, lz)] = B.glowstone;
+            break;
+          }
+        }
+        let top = 0;
+        for (let y = WORLD_HEIGHT - 1; y >= 0; y--) if (blocks[voxelIndex(lx, y, lz)] !== 0) { top = y; break; }
+        heightmap[lx + lz * CHUNK_X] = top;
+      }
+    }
+
+    this.placeStructures(blocks, cx, cz);
+    return { blocks, biomes, heightmap, overflow: new Int32Array(0) };
+  }
+
+  // --- End ------------------------------------------------------------------
+
+  /**
+   * L'End : des îles de pierre de l'End flottant dans le vide. Une île centrale
+   * autour de l'origine — celle où l'on arrive — puis un archipel dispersé.
+   */
+  private generateEnd(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
+    const ox = cx * CHUNK_X;
+    const oz = cz * CHUNK_Z;
+    const rnd = mulberry32((cx * 341873128712 + cz * 132897987541 + this.seed + 4242) | 0);
+    biomes.fill(Biome.StonyPeaks);
+    const CORE = 62;
+
+    for (let lz = 0; lz < CHUNK_Z; lz++) {
+      for (let lx = 0; lx < CHUNK_X; lx++) {
+        const wx = ox + lx, wz = oz + lz;
+        const rad = Math.hypot(wx, wz);
+        // Île principale : un disque de 48 blocs, épais au centre, effilé au bord.
+        const core = rad < 48 ? 1 - rad / 48 : 0;
+        // Archipel : bruit 2D seuillé, avec un vide franc autour de l'île centrale.
+        const far = clamp((rad - 90) / 160, 0, 1);
+        const isle = Math.max(0, fbm2(this.nCont, wx / 180, wz / 180, 3) * far - 0.12);
+
+        const thick = core * 14 + isle * 26;
+        if (thick < 1.5) { heightmap[lx + lz * CHUNK_X] = 0; continue; }
+        const top = Math.round(CORE + (core > 0 ? 0 : fbm2(this.nDetail, wx / 70, wz / 70, 2) * 20));
+        const bottom = Math.round(top - thick);
+        for (let y = bottom; y <= top; y++) {
+          if (y < 4 || y >= WORLD_HEIGHT) continue;
+          blocks[voxelIndex(lx, y, lz)] = B.end_stone;
+        }
+        // Colonnes d'obsidienne dressées sur l'île centrale : le décor du combat.
+        if (core > 0.55 && rnd() < 0.004) {
+          for (let y = top + 1; y <= top + 8 + Math.floor(rnd() * 12); y++) {
+            if (y < WORLD_HEIGHT) blocks[voxelIndex(lx, y, lz)] = B.obsidian;
+          }
+        }
+        // Veines de purpur dans les îles lointaines.
+        if (isle > 0.2 && rnd() < 0.02) blocks[voxelIndex(lx, Math.max(4, top), lz)] = B.purpur_block;
+        heightmap[lx + lz * CHUNK_X] = Math.min(WORLD_HEIGHT - 1, top);
+      }
+    }
+    return { blocks, biomes, heightmap, overflow: new Int32Array(0) };
+  }
+
   // --- Structures ---------------------------------------------------------
 
   /**
@@ -378,11 +512,20 @@ export class TerrainGenerator {
     };
   }
 
+  /** Le Nether a ses propres structures ; le superplat et l'End n'en ont pas. */
+  private get realm(): StructRealm | null {
+    if (this.type === 'normal') return 'overworld';
+    if (this.type === 'nether') return 'nether';
+    return null;
+  }
+
   /** Pose les structures dont l'emprise recoupe le chunk. */
   private placeStructures(blocks: Uint8Array, cx: number, cz: number): void {
+    const realm = this.realm;
+    if (!realm) return;
     const ox = cx * CHUNK_X;
     const oz = cz * CHUNK_Z;
-    emitStructures(this.structCtx(blocks, ox, oz), ox, oz, ox + CHUNK_X - 1, oz + CHUNK_Z - 1);
+    emitStructures(this.structCtx(blocks, ox, oz), ox, oz, ox + CHUNK_X - 1, oz + CHUNK_Z - 1, realm);
   }
 
   /**
@@ -391,6 +534,8 @@ export class TerrainGenerator {
    * point demandé, sans écrire un seul bloc.
    */
   lootKindAt(x: number, y: number, z: number): LootKind | null {
+    const realm = this.realm;
+    if (!realm) return null;
     let found: LootKind | null = null;
     const ctx: StructCtx = {
       seed: this.seed,
@@ -401,7 +546,7 @@ export class TerrainGenerator {
         if (cxw === x && cyw === y && czw === z) found = k;
       },
     };
-    emitStructures(ctx, x, z, x, z);
+    emitStructures(ctx, x, z, x, z, realm);
     return found;
   }
 

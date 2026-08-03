@@ -8,6 +8,7 @@
  */
 
 import { chunkKey } from '../core/constants';
+import type { Dimension } from '../world/generator';
 
 const DB_NAME = 'voxelcraft';
 const DB_VERSION = 1;
@@ -31,6 +32,10 @@ export interface WorldMeta {
   type?: 'normal' | 'flat' | 'oneblock';
   /** Mode « oneblock » : nombre de blocs cassés depuis le début. */
   oneblock?: number;
+  /** Dimension où le joueur s'est déconnecté. */
+  dimension?: Dimension;
+  /** Position de retour dans l'Overworld, mémorisée en entrant dans un portail. */
+  returnPos?: [number, number, number];
 }
 
 export interface PlayerSave {
@@ -107,6 +112,17 @@ export class SaveManager {
   private edits = new Map<string, Map<number, number>>();
   private dirtyKeys = new Set<string>();
   private flushTimer: number | null = null;
+  /**
+   * Dimension courante. Les modifications de blocs sont rangées sous une clé
+   * préfixée, sauf dans l'Overworld qui garde la clé nue — c'est ce qui permet
+   * de relire les mondes créés avant l'arrivée du Nether.
+   */
+  dimension: Dimension = 'overworld';
+
+  private dimKey(cx: number, cz: number): string {
+    const k = chunkKey(cx, cz);
+    return this.dimension === 'overworld' ? k : `${this.dimension}/${k}`;
+  }
 
   constructor(
     private db: IDBDatabase | null,
@@ -143,12 +159,12 @@ export class SaveManager {
   }
 
   getEdits(cx: number, cz: number): Map<number, number> | undefined {
-    return this.edits.get(chunkKey(cx, cz));
+    return this.edits.get(this.dimKey(cx, cz));
   }
 
   /** Enregistre une modification unitaire (appelé à chaque bloc posé/cassé). */
   recordEdit(cx: number, cz: number, index: number, block: number): void {
-    const key = chunkKey(cx, cz);
+    const key = this.dimKey(cx, cz);
     let m = this.edits.get(key);
     if (!m) { m = new Map(); this.edits.set(key, m); }
     m.set(index, block);
@@ -157,7 +173,7 @@ export class SaveManager {
   }
 
   storeEdits(cx: number, cz: number, map: Map<number, number>): void {
-    const key = chunkKey(cx, cz);
+    const key = this.dimKey(cx, cz);
     this.edits.set(key, new Map(map));
     this.dirtyKeys.add(key);
     this.scheduleFlush();

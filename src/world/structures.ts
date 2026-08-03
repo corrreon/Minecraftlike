@@ -21,7 +21,9 @@ import { B } from './blocks';
 import { Biome } from './biomes';
 import { mulberry32 } from './noise';
 
-export type LootKind = 'village' | 'shipwreck' | 'portal' | 'treasure';
+export type LootKind = 'village' | 'shipwreck' | 'portal' | 'treasure' | 'mineshaft' | 'fortress';
+/** Où une structure a le droit d'exister. */
+export type StructRealm = 'overworld' | 'nether';
 
 /** Ce dont un bâtisseur a besoin : lire le terrain, écrire des blocs. */
 export interface StructCtx {
@@ -47,12 +49,16 @@ export const VILLAGE_SPACING = 100;
 const SHIPWRECK_SPACING = 128;
 const PORTAL_SPACING = 192;
 const TREASURE_SPACING = 112;
+const MINESHAFT_SPACING = 144;
+const FORTRESS_SPACING = 176;
 
 /** Rayon d'emprise, utilisé pour savoir quelles cellules concernent un chunk. */
 const VILLAGE_RADIUS = 30;
 const SHIPWRECK_RADIUS = 10;
 const PORTAL_RADIUS = 9;
 const TREASURE_RADIUS = 3;
+const MINESHAFT_RADIUS = 42;
+const FORTRESS_RADIUS = 34;
 
 /** Hachage entier stable : même valeur dans le worker et sur le thread principal. */
 function hashCell(seed: number, gx: number, gz: number, salt: number): number {
@@ -152,26 +158,30 @@ export function treasureAt(ctx: StructCtx, gx: number, gz: number): Anchor | nul
 // Émission
 // ---------------------------------------------------------------------------
 
-interface Kindled<T> {
+interface Kindled {
+  realm: StructRealm;
   spacing: number;
   radius: number;
-  pick: (ctx: StructCtx, gx: number, gz: number) => T | null;
+  pick: (ctx: StructCtx, gx: number, gz: number) => Anchor | null;
   build: (ctx: StructCtx, a: Anchor) => void;
 }
 
-const KINDS: Kindled<Anchor>[] = [
-  { spacing: VILLAGE_SPACING, radius: VILLAGE_RADIUS, pick: villageAt, build: buildVillage },
-  { spacing: SHIPWRECK_SPACING, radius: SHIPWRECK_RADIUS, pick: shipwreckAt, build: buildShipwreck },
-  { spacing: PORTAL_SPACING, radius: PORTAL_RADIUS, pick: portalAt, build: buildSunkenPortal },
-  { spacing: TREASURE_SPACING, radius: TREASURE_RADIUS, pick: treasureAt, build: buildTreasure },
+const KINDS: Kindled[] = [
+  { realm: 'overworld', spacing: VILLAGE_SPACING, radius: VILLAGE_RADIUS, pick: villageAt, build: buildVillage },
+  { realm: 'overworld', spacing: SHIPWRECK_SPACING, radius: SHIPWRECK_RADIUS, pick: shipwreckAt, build: buildShipwreck },
+  { realm: 'overworld', spacing: PORTAL_SPACING, radius: PORTAL_RADIUS, pick: portalAt, build: buildSunkenPortal },
+  { realm: 'overworld', spacing: TREASURE_SPACING, radius: TREASURE_RADIUS, pick: treasureAt, build: buildTreasure },
+  { realm: 'overworld', spacing: MINESHAFT_SPACING, radius: MINESHAFT_RADIUS, pick: mineshaftAt, build: buildMineshaft },
+  { realm: 'nether', spacing: FORTRESS_SPACING, radius: FORTRESS_RADIUS, pick: fortressAt, build: buildFortress },
 ];
 
 /**
  * Construit toutes les structures dont l'emprise recoupe la boîte
  * `[minX, maxX] × [minZ, maxZ]`. Le `set` du contexte se charge du découpage.
  */
-export function emitStructures(ctx: StructCtx, minX: number, minZ: number, maxX: number, maxZ: number): void {
+export function emitStructures(ctx: StructCtx, minX: number, minZ: number, maxX: number, maxZ: number, realm: StructRealm = 'overworld'): void {
   for (const k of KINDS) {
+    if (k.realm !== realm) continue;
     const g0x = floorDiv(minX - k.radius, k.spacing);
     const g1x = floorDiv(maxX + k.radius, k.spacing);
     const g0z = floorDiv(minZ - k.radius, k.spacing);
@@ -557,4 +567,215 @@ function buildTreasure(ctx: StructCtx, a: Anchor): void {
   }
   ctx.set(a.x, y, a.z, B.chest, true);
   ctx.chest(a.x, y, a.z, 'treasure');
+}
+
+// ---------------------------------------------------------------------------
+// Mine abandonnée
+// ---------------------------------------------------------------------------
+
+/**
+ * Mine abandonnée : un réseau de galeries étayées, creusé sous terre. Le site
+ * est valide dès que le terrain est assez haut pour loger le niveau de la mine.
+ */
+export function mineshaftAt(ctx: StructCtx, gx: number, gz: number): Anchor | null {
+  const h0 = hashCell(ctx.seed, gx, gz, 523);
+  if (h0 % 100 < 24) return null;
+  const x = gx * MINESHAFT_SPACING + 24 + ((h0 >>> 7) % (MINESHAFT_SPACING - 48));
+  const z = gz * MINESHAFT_SPACING + 24 + ((h0 >>> 17) % (MINESHAFT_SPACING - 48));
+  const surface = ctx.heightAt(x, z);
+  if (surface < SEA_LEVEL - 2) return null;
+  // La mine s'installe entre 14 et 40, sous la couche de surface.
+  const y = 14 + (h0 >>> 23) % 22;
+  if (y > surface - 12) return null;
+  return { x, z, y, salt: h0 };
+}
+
+/**
+ * Galeries en croix, sur deux niveaux reliés par un puits. Chaque galerie est
+ * étayée tous les cinq blocs, éclairée à la torche, et débouche parfois sur une
+ * salle plus large avec un coffre.
+ */
+function buildMineshaft(ctx: StructCtx, a: Anchor): void {
+  const rnd = mulberry32(a.salt ^ 0x3ac91f5b);
+
+  /** Creuse une galerie de 3 de large et 3 de haut, étayée. */
+  const gallery = (x0: number, z0: number, y: number, dx: number, dz: number, len: number) => {
+    for (let i = 0; i < len; i++) {
+      const x = x0 + dx * i;
+      const z = z0 + dz * i;
+      // Section : on évide, puis on pose un plancher de planches.
+      for (let dy = 0; dy <= 2; dy++) {
+        for (let w = -1; w <= 1; w++) {
+          const px = x + (dz ? w : 0);
+          const pz = z + (dx ? w : 0);
+          ctx.set(px, y + dy, pz, 0, true);
+        }
+      }
+      for (let w = -1; w <= 1; w++) {
+        ctx.set(x + (dz ? w : 0), y - 1, z + (dx ? w : 0), rnd() < 0.75 ? B.oak_planks : B.gravel, true);
+      }
+      // Étai : deux poteaux et une poutre, tous les cinq blocs.
+      if (i % 5 === 0) {
+        for (const w of [-1, 1]) {
+          const px = x + (dz ? w : 0);
+          const pz = z + (dx ? w : 0);
+          for (let dy = 0; dy <= 2; dy++) ctx.set(px, y + dy, pz, B.oak_log, true);
+        }
+        for (let w = -1; w <= 1; w++) ctx.set(x + (dz ? w : 0), y + 3, z + (dx ? w : 0), B.oak_planks, true);
+        if (rnd() < 0.5) ctx.set(x, y + 2, z, B.torch, true);
+      }
+      // Éboulements et filons exposés : la galerie n'est pas un couloir propre.
+      if (rnd() < 0.06) ctx.set(x, y, z, B.gravel, true);
+      if (rnd() < 0.05) {
+        const ore = rnd() < 0.5 ? B.iron_ore : rnd() < 0.6 ? B.coal_ore : rnd() < 0.8 ? B.gold_ore : B.diamond_ore;
+        ctx.set(x + (dz ? 2 : 0), y + 1, z + (dx ? 2 : 0), ore, true);
+      }
+    }
+  };
+
+  const levels = [a.y, a.y + 7];
+  for (let li = 0; li < levels.length; li++) {
+    const y = levels[li];
+    if (y < 6 || y > WORLD_HEIGHT - 8) continue;
+    // Deux galeries principales en croix, plus des embranchements.
+    gallery(a.x - 26, a.z, y, 1, 0, 52);
+    gallery(a.x, a.z - 26, y, 0, 1, 52);
+    const branches = 2 + Math.floor(rnd() * 3);
+    for (let b = 0; b < branches; b++) {
+      const along = rnd() < 0.5;
+      const off = Math.floor((rnd() - 0.5) * 40);
+      const len = 12 + Math.floor(rnd() * 16);
+      if (along) gallery(a.x + off, a.z - (len >> 1), y, 0, 1, len);
+      else gallery(a.x - (len >> 1), a.z + off, y, 1, 0, len);
+    }
+    // Salle du dépôt : un coffre et un établi, au croisement.
+    const cx = a.x + (li === 0 ? -4 : 4);
+    const cz = a.z + (li === 0 ? 4 : -4);
+    for (let dy = 0; dy <= 3; dy++)
+      for (let dz = -3; dz <= 3; dz++)
+        for (let dx = -3; dx <= 3; dx++) ctx.set(cx + dx, y + dy, cz + dz, 0, true);
+    for (let dz = -3; dz <= 3; dz++)
+      for (let dx = -3; dx <= 3; dx++) ctx.set(cx + dx, y - 1, cz + dz, B.oak_planks, true);
+    ctx.set(cx + 2, y, cz + 2, B.chest, true);
+    ctx.chest(cx + 2, y, cz + 2, 'mineshaft');
+    ctx.set(cx - 2, y, cz - 2, B.crafting_table, true);
+    ctx.set(cx, y + 3, cz, B.torch, true);
+  }
+
+  // Puits vertical reliant les deux niveaux, avec une échelle suggérée en poteaux.
+  for (let y = a.y; y <= a.y + 9; y++) {
+    for (let dz = -1; dz <= 1; dz++) for (let dx = -1; dx <= 1; dx++) ctx.set(a.x + dx, y, a.z + dz, 0, true);
+    ctx.set(a.x + 1, y, a.z, B.oak_log, true);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Forteresse du Nether
+// ---------------------------------------------------------------------------
+
+/** Altitude fixe des forteresses : le relief du Nether n'a pas de « surface ». */
+const FORTRESS_Y = 48;
+
+export function fortressAt(ctx: StructCtx, gx: number, gz: number): Anchor | null {
+  const h0 = hashCell(ctx.seed, gx, gz, 631);
+  if (h0 % 100 < 20) return null;
+  const x = gx * FORTRESS_SPACING + 30 + ((h0 >>> 7) % (FORTRESS_SPACING - 60));
+  const z = gz * FORTRESS_SPACING + 30 + ((h0 >>> 17) % (FORTRESS_SPACING - 60));
+  return { x, z, y: FORTRESS_Y, salt: h0 };
+}
+
+/**
+ * Forteresse : un pont central en briques du Nether, deux tours, une salle des
+ * braises et — le bout de la chaîne — la **salle du portail de l'End**, dont
+ * les douze cadres attendent d'être garnis d'yeux.
+ */
+function buildFortress(ctx: StructCtx, a: Anchor): void {
+  const rnd = mulberry32(a.salt ^ 0x5c1de3a9);
+  const y = a.y;
+
+  /** Boîte pleine, puis évidée : la forteresse s'impose au terrain. */
+  const box = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number, id: number) => {
+    for (let z = z0; z <= z1; z++)
+      for (let yy = y0; yy <= y1; yy++)
+        for (let x = x0; x <= x1; x++) ctx.set(x, yy, z, id, true);
+  };
+  /** Coque : parois pleines, intérieur dégagé. */
+  const room = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => {
+    box(x0, y0, z0, x1, y1, z1, B.nether_bricks);
+    box(x0 + 1, y0 + 1, z0 + 1, x1 - 1, y1 - 1, z1 - 1, 0);
+  };
+
+  // Pont principal est-ouest, avec ses arches et son garde-corps.
+  box(a.x - 24, y, a.z - 2, a.x + 24, y, a.z + 2, B.nether_bricks);
+  box(a.x - 24, y + 1, a.z - 2, a.x + 24, y + 4, a.z + 2, 0);
+  for (let x = a.x - 24; x <= a.x + 24; x++) {
+    ctx.set(x, y + 1, a.z - 2, B.nether_bricks, true);
+    ctx.set(x, y + 1, a.z + 2, B.nether_bricks, true);
+    // Piles descendantes tous les huit blocs : le pont ne flotte pas.
+    if ((x - a.x) % 8 === 0) {
+      for (let dy = 1; dy <= 14; dy++) {
+        ctx.set(x, y - dy, a.z - 2, B.nether_bricks, true);
+        ctx.set(x, y - dy, a.z + 2, B.nether_bricks, true);
+      }
+      for (let dy = 2; dy <= 4; dy++) { ctx.set(x, y + dy, a.z - 2, B.nether_bricks, true); ctx.set(x, y + dy, a.z + 2, B.nether_bricks, true); }
+      ctx.set(x, y + 5, a.z, B.nether_bricks, true);
+    }
+    if ((x - a.x) % 6 === 3) ctx.set(x, y + 1, a.z, B.glowstone, true);
+  }
+
+  // Aile nord : salle des braises, gardée par un coffre.
+  room(a.x - 7, y, a.z - 16, a.x + 1, y + 6, a.z - 4);
+  box(a.x - 3, y, a.z - 4, a.x - 1, y + 3, a.z - 3, 0); // couloir vers le pont
+  ctx.set(a.x - 6, y + 1, a.z - 15, B.chest, true);
+  ctx.chest(a.x - 6, y + 1, a.z - 15, 'fortress');
+  ctx.set(a.x - 3, y + 1, a.z - 10, B.magma_block, true);
+  for (let i = 0; i < 8; i++) {
+    const bx = a.x - 6 + Math.floor(rnd() * 7);
+    const bz = a.z - 15 + Math.floor(rnd() * 11);
+    ctx.set(bx, y + 1, bz, rnd() < 0.5 ? B.soul_sand : B.netherrack, true);
+  }
+
+  // Aile sud : la salle du portail de l'End.
+  buildEndPortalRoom(ctx, a.x - 1, y, a.z + 12, rnd);
+  box(a.x - 3, y, a.z + 3, a.x - 1, y + 3, a.z + 6, 0);
+
+  // Deux tours d'angle avec leur coffre.
+  for (const [sx, sz] of [[-20, -8], [20, 8]] as const) {
+    room(a.x + sx - 3, y - 2, a.z + sz - 3, a.x + sx + 3, y + 9, a.z + sz + 3);
+    ctx.set(a.x + sx, y + 8, a.z + sz, B.glowstone, true);
+    ctx.set(a.x + sx + 2, y - 1, a.z + sz + 2, B.chest, true);
+    ctx.chest(a.x + sx + 2, y - 1, a.z + sz + 2, 'fortress');
+    // Passerelle vers le pont.
+    const step = sz < 0 ? 1 : -1;
+    for (let i = 0; i <= Math.abs(sz); i++) box(a.x + sx, y, a.z + sz + step * i, a.x + sx + 1, y, a.z + sz + step * i, B.nether_bricks);
+  }
+}
+
+/**
+ * Salle du portail de l'End : douze cadres en anneau autour d'un bassin de
+ * trois sur trois. Les cadres sont vides — c'est au joueur d'y sertir les yeux.
+ */
+function buildEndPortalRoom(ctx: StructCtx, cx: number, y: number, cz: number, rnd: () => number): void {
+  // Coque de la salle.
+  for (let dz = -6; dz <= 6; dz++)
+    for (let dy = -1; dy <= 8; dy++)
+      for (let dx = -6; dx <= 6; dx++) {
+        const shell = Math.abs(dx) === 6 || Math.abs(dz) === 6 || dy === -1 || dy === 8;
+        ctx.set(cx + dx, y + dy, cz + dz, shell ? B.nether_bricks : 0, true);
+      }
+  // Dallage et vasques de lave aux angles : la salle s'éclaire toute seule.
+  for (let dz = -5; dz <= 5; dz++)
+    for (let dx = -5; dx <= 5; dx++) ctx.set(cx + dx, y - 1, cz + dz, rnd() < 0.2 ? B.cracked_stone_bricks : B.stone_bricks, true);
+  for (const [ax, az] of [[-4, -4], [4, -4], [-4, 4], [4, 4]] as const) ctx.set(cx + ax, y, cz + az, B.glowing_obsidian, true);
+
+  // L'anneau : trois cadres par côté, tournés vers le centre.
+  for (let d = -1; d <= 1; d++) {
+    ctx.set(cx + d, y, cz - 2, B.end_portal_frame, true);
+    ctx.set(cx + d, y, cz + 2, B.end_portal_frame, true);
+    ctx.set(cx - 2, y, cz + d, B.end_portal_frame, true);
+    ctx.set(cx + 2, y, cz + d, B.end_portal_frame, true);
+  }
+  // Fond du bassin : c'est là que le portail s'ouvrira.
+  for (let dz = -1; dz <= 1; dz++)
+    for (let dx = -1; dx <= 1; dx++) ctx.set(cx + dx, y - 1, cz + dz, B.obsidian, true);
 }

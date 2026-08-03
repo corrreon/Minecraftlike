@@ -543,6 +543,66 @@ for (const [key, name, texture] of SLAB_MATERIALS) {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Nether et End
+// ---------------------------------------------------------------------------
+
+define('netherrack', {
+  name: 'Netherrack', textures: 'netherrack', hardness: 0.4, tool: 'pickaxe', needsTool: true, flammable: true,
+});
+define('soul_sand', {
+  name: 'Sable des âmes', textures: 'soul_sand', hardness: 0.5, tool: 'shovel', sound: 'sand',
+  // Le bloc n'occupe que sept huitièmes de son voxel : on s'y enfonce.
+  minY: 0, maxY: 0.875, opaque: false, lightFilter: 15,
+});
+define('magma_block', {
+  name: 'Bloc de magma', textures: 'magma', hardness: 0.5, tool: 'pickaxe', needsTool: true,
+  emission: 3, contactDamage: 1,
+});
+define('glowing_obsidian', {
+  name: 'Obsidienne pleurante', textures: 'glowing_obsidian', hardness: 12, tool: 'pickaxe', needsTool: true, emission: 10,
+});
+define('ancient_debris', {
+  name: 'Débris antiques', textures: 'ancient_debris', hardness: 6, tool: 'pickaxe', needsTool: true,
+  drop: 'ancient_debris', sound: 'metal',
+});
+define('netherite_block', {
+  name: 'Bloc de netherite', textures: 'netherite_block', hardness: 8, tool: 'pickaxe', needsTool: true, sound: 'metal',
+});
+define('nether_quartz_ore', {
+  name: 'Quartz du Nether', textures: 'nether_quartz_ore', hardness: 3, tool: 'pickaxe', needsTool: true,
+  drop: 'quartz', dropCount: [1, 2],
+});
+define('end_stone', { name: 'Pierre de l’End', textures: 'end_stone', hardness: 3, tool: 'pickaxe', needsTool: true });
+
+/**
+ * Cadre du portail de l'End. Ne se casse pas : c'est le repère de la salle du
+ * portail, et le remplir d'yeux ouvre le passage.
+ */
+define('end_portal_frame', {
+  name: 'Cadre de portail', textures: { top: 'end_portal_frame_top', side: 'end_portal_frame' },
+  hardness: -1, emission: 1,
+});
+define('end_portal_frame_filled', {
+  name: 'Cadre de portail (œil)', textures: { top: 'end_portal_frame_eye', side: 'end_portal_frame' },
+  hardness: -1, emission: 6,
+});
+
+/**
+ * Blocs de portail. Traversables, lumineux, incassables à la main : c'est le
+ * jeu qui les pose et les retire.
+ */
+define('nether_portal', {
+  name: 'Portail du Nether', textures: 'nether_portal',
+  render: RenderKind.Cube, layer: RenderLayer.Translucent,
+  solid: false, opaque: false, lightFilter: 0, emission: 11, hardness: -1, replaceable: false, sound: 'glass',
+});
+define('end_portal', {
+  name: 'Portail de l’End', textures: 'end_portal',
+  render: RenderKind.Cube, layer: RenderLayer.Translucent,
+  solid: false, opaque: false, lightFilter: 0, emission: 15, hardness: -1, sound: 'glass',
+});
+
 export const AIR = 0;
 export const BLOCK_COUNT = BLOCKS.length;
 
@@ -673,4 +733,19 @@ export const B = {
   white_wool: blockId('white_wool'),
   red_wool: blockId('red_wool'),
   brown_terracotta: blockId('brown_terracotta'),
+  // Nether et End.
+  netherrack: blockId('netherrack'),
+  soul_sand: blockId('soul_sand'),
+  magma_block: blockId('magma_block'),
+  glowing_obsidian: blockId('glowing_obsidian'),
+  ancient_debris: blockId('ancient_debris'),
+  netherite_block: blockId('netherite_block'),
+  nether_quartz_ore: blockId('nether_quartz_ore'),
+  end_stone: blockId('end_stone'),
+  end_portal_frame: blockId('end_portal_frame'),
+  end_portal_frame_filled: blockId('end_portal_frame_filled'),
+  nether_portal: blockId('nether_portal'),
+  end_portal: blockId('end_portal'),
+  nether_bricks: blockId('nether_bricks'),
+  purpur_block: blockId('purpur_block'),
 } as const;

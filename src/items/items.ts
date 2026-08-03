@@ -214,6 +214,40 @@ export function itemOf(key: string): ItemDef {
   return i;
 }
 
+// --- Nether, End et netherite ----------------------------------------------
+item('flint_and_steel', {
+  name: 'Briquet', maxStack: 1, color: 0xc0c0c0, icon: 'tool', durability: 64,
+});
+item('netherite_scrap', { name: 'Éclat de netherite', color: 0x8a6f5e, icon: 'nugget' });
+item('netherite_ingot', { name: 'Lingot de netherite', color: 0x5a4a4e, icon: 'ingot' });
+item('blaze_rod', { name: 'Bâton de braise', color: 0xf2b02a, icon: 'stick', fuel: 240 });
+item('blaze_powder', { name: 'Poudre de braise', color: 0xe89a1a, icon: 'dust' });
+item('ender_pearl', { name: 'Perle de l’Ender', color: 0x2fa892, icon: 'gem' });
+item('eye_of_ender', { name: 'Œil de l’Ender', color: 0x63d8a8, icon: 'gem' });
+item('ghast_tear', { name: 'Larme de spectre', color: 0xdff3f0, icon: 'gem' });
+
+// La netherite prolonge la progression fer → or → diamant d'un cran.
+for (const k of TOOL_KINDS) {
+  item(`netherite_${k.key}`, {
+    name: `${k.name} en netherite`,
+    maxStack: 1,
+    color: 0x5a4a4e,
+    icon: 'tool',
+    durability: k.key === 'sword' ? 1900 : 2031,
+    tool: { kind: k.key, tier: 5, speed: k.key === 'sword' ? 1.8 : 9.5, damage: 1 + 5 + k.dmgBonus },
+  });
+}
+for (const p of ARMOR_PIECES) {
+  item(`netherite_${p.key}`, {
+    name: `${p.name} en netherite`,
+    maxStack: 1,
+    color: 0x5a4a4e,
+    icon: 'armor',
+    durability: 666,
+    armor: { slot: p.slot, defense: [3, 8, 6, 3][p.slot] + 1 },
+  });
+}
+
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];
 }
@@ -224,6 +258,8 @@ const MINE_LEVEL: Record<string, number> = {
   gold_ore: 3, diamond_ore: 3, emerald_ore: 3, redstone_ore: 3,
   gold_block: 3, diamond_block: 3, emerald_block: 3, redstone_block: 3,
   obsidian: 4,
+  ancient_debris: 4, netherite_block: 4, glowing_obsidian: 4,
+  nether_quartz_ore: 2, end_stone: 1, magma_block: 1,
 };
 
 export function requiredMineLevel(blockKey: string): number {
@@ -290,6 +326,7 @@ export const SMELTING: Record<string, string> = {
   spruce_log: 'charcoal',
   jungle_log: 'charcoal',
   stone: 'stone_bricks',
+  ancient_debris: 'netherite_scrap',
 };
 
 export function blockItemFor(blockKey: string): ItemDef | undefined {
@@ -317,6 +354,7 @@ export const CATEGORY_LABELS: Record<ItemCategory, string> = {
 const NATURE_KEYS = new Set([
   'grass_block', 'dirt', 'coarse_dirt', 'sand', 'red_sand', 'gravel', 'clay', 'snow_block',
   'ice', 'packed_ice', 'cactus', 'pumpkin', 'melon', 'jack_o_lantern',
+  'netherrack', 'soul_sand', 'magma_block', 'end_stone',
 ]);
 
 export function itemCategory(def: ItemDef): ItemCategory {
@@ -336,6 +374,8 @@ export function itemCategory(def: ItemDef): ItemCategory {
   if (b && (b.render === RenderKind.Cross || key.endsWith('_leaves') || key.endsWith('_log') || key.endsWith('_sapling'))) {
     return 'nature';
   }
-  if (key.endsWith('_ore')) return 'ressources';
+  if (key.endsWith('_ore') || key === 'ancient_debris') return 'ressources';
+  // Portails et cadres relèvent du mécanisme, pas de la décoration.
+  if (key.startsWith('end_portal') || key === 'nether_portal') return 'redstone';
   return 'construction';
 }

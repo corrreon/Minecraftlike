@@ -51,15 +51,15 @@ import { createEntityMaterial } from '../render/entityMaterial';
 import { createShadowMaterial, createTerrainMaterial } from '../render/materials';
 import { ParticleSystem, Weather } from '../render/Particles';
 import { PostFX, projectSun } from '../render/PostFX';
-import { Sky, computeSkyState, createSkyState } from '../render/Sky';
+import { Sky, computeSkyState, createSkyState, type SkyState } from '../render/Sky';
 import { ShadowMap } from '../render/ShadowMap';
 import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type PlayerSave, type WorldMeta } from '../save/SaveManager';
-import { BLOCKS, BLOCK_BY_KEY, IS_SOLID, RenderKind, block as blockDef } from '../world/blocks';
+import { B, BLOCKS, BLOCK_BY_KEY, IS_SOLID, RenderKind, block as blockDef } from '../world/blocks';
 import { biomeDef } from '../world/biomes';
 import { ChunkState } from '../world/Chunk';
 import { World } from '../world/World';
 import { WorkerPool } from '../world/WorkerPool';
-import { ONEBLOCK_X, ONEBLOCK_Y, ONEBLOCK_Z, TerrainGenerator, type WorldType } from '../world/generator';
+import { NETHER_LAVA, ONEBLOCK_X, ONEBLOCK_Y, ONEBLOCK_Z, TerrainGenerator, type Dimension, type GenKind, type WorldType } from '../world/generator';
 import { Hud } from '../ui/Hud';
 import { Screens, type FurnaceState } from '../ui/Screens';
 import { buildIcons } from '../ui/icons';
@@ -133,6 +133,16 @@ export class Game {
    */
   private structGen: TerrainGenerator | null = null;
   private worldType: WorldType = 'normal';
+  /** Dimension où se trouve le joueur. */
+  private dimension: Dimension = 'overworld';
+  /** Position de retour dans l'Overworld, retenue en franchissant un portail. */
+  private returnPos: Vector3 | null = null;
+  /** Temps passé dans un bloc de portail : au-delà d'un seuil, on bascule. */
+  private portalTimer = 0;
+  /** Empêche un aller-retour immédiat au moment où l'on ressort d'un portail. */
+  private portalCooldown = 0;
+  /** Contenus de conteneurs, rangés par dimension. */
+  private dimEntities = new Map<Dimension, Map<string, FurnaceState | Container>>();
   /** Coffres de structures déjà remplis, pour ne pas les regarnir. */
   private lootedChests = new Set<string>();
   /** Mode « oneblock » : compteur de blocs cassés et phase courante. */
@@ -267,6 +277,24 @@ export class Game {
     return { kind, items: [...rollLoot(kind, x, y, z, 27).values()].map((s) => `${s.item.key}×${s.count}`) };
   }
 
+  /** Pose un bloc par sa clé : mise en place de scénarios de test. */
+  debugSet(x: number, y: number, z: number, key: string): boolean {
+    const id = key === 'air' ? 0 : BLOCK_BY_KEY.get(key)?.id;
+    if (id === undefined) return false;
+    this.setBlock(x, y, z, id);
+    return true;
+  }
+
+  /** Allume un cadre d'obsidienne sans passer par le briquet. */
+  debugIgnite(x: number, y: number, z: number): boolean {
+    return this.ignitePortal(x, y, z);
+  }
+
+  /** Dimension courante et point de retour. */
+  debugDimension(): { dimension: string; returnPos: number[] | null } {
+    return { dimension: this.dimension, returnPos: this.returnPos ? this.returnPos.toArray() : null };
+  }
+
   /** État du mode « oneblock » : compteur et phase. */
   debugOneblock(): { type: string; count: number; phase: string } {
     return { type: this.worldType, count: this.oneblockCount, phase: this.oneblockPhase };
@@ -396,21 +424,13 @@ export class Game {
     this.lootedChests.clear();
 
     this.rnd = mulberry32(meta.seed ^ 0x9e3779b9);
-    this.world = new World(meta.seed);
-    this.structGen = this.worldType === 'normal' ? new TerrainGenerator(meta.seed, 'normal') : null;
-    this.pool = new WorkerPool(meta.seed, this.worldType);
-    this.particles = new ParticleSystem(this.world);
-    this.scene.add(this.particles.mesh);
-
-    const materials = {
-      opaque: createTerrainMaterial('opaque', this.atlas.texture, this.atlas.normalTexture, this.env),
-      cutout: createTerrainMaterial('cutout', this.atlas.texture, this.atlas.normalTexture, this.env),
-      water: createTerrainMaterial('water', this.atlas.texture, this.atlas.normalTexture, this.env),
-    };
-    this.shadowMaterial = createShadowMaterial(this.atlas.texture, this.env);
-    this.chunks = new ChunkManager(this.world, this.pool, materials, this.save);
-    this.chunks.renderDistance = this.settings.renderDistance;
-    this.scene.add(this.chunks.group);
+    this.dimension = meta.dimension ?? 'overworld';
+    this.save.dimension = this.dimension;
+    this.returnPos = meta.returnPos ? new Vector3(...meta.returnPos) : null;
+    this.dimEntities.clear();
+    this.portalCooldown = 4;
+    this.arrivedFrom = null;
+    this.buildDimension(meta.seed);
 
     this.player = new Player();
     this.player.mode = meta.mode as GameMode;
@@ -437,6 +457,31 @@ export class Game {
     this.hud.updateHotbar(this.inventory, true);
     this.audio.resume();
     this.applySettings();
+  }
+
+  /**
+   * (Re)construit monde, workers et chunks pour la dimension courante. Appelé à
+   * l'ouverture d'un monde, puis à chaque passage de portail.
+   */
+  private buildDimension(seed: number): void {
+    // Le générateur dépend de la dimension : superplat et oneblock ne
+    // concernent que l'Overworld.
+    const kind: GenKind = this.dimension === 'overworld' ? this.worldType : this.dimension;
+    this.world = new World(seed);
+    this.structGen = kind === 'normal' || kind === 'nether' ? new TerrainGenerator(seed, kind) : null;
+    this.pool = new WorkerPool(seed, kind);
+    this.particles = new ParticleSystem(this.world);
+    this.scene.add(this.particles.mesh);
+
+    const materials = {
+      opaque: createTerrainMaterial('opaque', this.atlas.texture, this.atlas.normalTexture, this.env),
+      cutout: createTerrainMaterial('cutout', this.atlas.texture, this.atlas.normalTexture, this.env),
+      water: createTerrainMaterial('water', this.atlas.texture, this.atlas.normalTexture, this.env),
+    };
+    this.shadowMaterial = createShadowMaterial(this.atlas.texture, this.env);
+    this.chunks = new ChunkManager(this.world, this.pool, materials, this.save);
+    this.chunks.renderDistance = this.settings.renderDistance;
+    this.scene.add(this.chunks.group);
   }
 
   private applyPlayerSave(s: PlayerSave): void {
@@ -930,6 +975,20 @@ export class Game {
         this.timeFrozen = !this.timeFrozen;
         this.echo(this.timeFrozen ? 'Temps figé.' : 'Le temps reprend son cours.');
         break;
+      // --- Dimensions ---
+      case 'dim':
+      case 'dimension': {
+        const a = (parts[0] ?? '').toLowerCase();
+        const to: Dimension | null =
+          a === 'nether' ? 'nether'
+            : a === 'end' ? 'end'
+              : a === 'overworld' || a === 'monde' ? 'overworld'
+                : null;
+        if (!to) { this.echo(`Dimension courante : ${this.dimension}. Usage : /dimension <overworld|nether|end>`); break; }
+        if (to === this.dimension) { this.echo('Vous y êtes déjà.'); break; }
+        void this.travelTo(to);
+        break;
+      }
       case 'mobs': {
         const a = parts[0]?.toLowerCase();
         this.mobsEnabled = a === 'on' || a === 'oui' ? true : a === 'off' || a === 'non' ? false : !this.mobsEnabled;
@@ -939,7 +998,7 @@ export class Game {
       }
       case 'aide':
       case 'help':
-        this.echo('Jeu : /gamemode /tp /time /give /meteo /seed /tuer /figer /mobs');
+        this.echo('Jeu : /gamemode /tp /time /give /meteo /seed /tuer /figer /mobs /dimension');
         this.echo('Construction : /pos1 /pos2 /sel /remplir /coque /remplacer /copier /coller /annuler');
         break;
       default:
@@ -989,8 +1048,9 @@ export class Game {
       this.world.processLighting(60000);
       this.world.flushBorders();
       if (this.chunks.isReadyAt(this.player.position.x, this.player.position.z)) {
-        if (this.worldType === 'oneblock') this.placeOnOneblock();
-        else this.placePlayerOnGround();
+        if (this.arrivedFrom !== null) { this.buildArrivalPlatform(); this.arrivedFrom = null; }
+        else if (this.worldType === 'oneblock') this.placeOnOneblock();
+        else if (this.dimension === 'overworld') this.placePlayerOnGround();
         this.worldReady = true;
         this.setLoading(false, '');
         if (!this.input.touchEnabled) this.input.requestLock();
@@ -1008,6 +1068,7 @@ export class Game {
       this.player.update(step, this.input.state, this.world, this.elapsed);
       this.handleStepSounds(step);
       this.guardVoid();
+      this.updatePortals(step);
     }
     if (this.player.dead && this.screens.active !== 'death') {
       this.audio.hurt();
@@ -1181,6 +1242,34 @@ export class Game {
 
     e.uUnderwater.value = this.player.submerged ? 1 : 0;
     (e.uCameraPos.value as Vector3).copy(this.camera.position);
+
+    if (this.dimension !== 'overworld') this.applyDimensionSky(st);
+  }
+
+  /**
+   * Le Nether et l'End n'ont ni soleil ni cycle : on écrase la lumière du ciel
+   * par une ambiance fixe, rouge et étouffante d'un côté, froide et vide de
+   * l'autre. Sans ça, on aurait un ciel bleu au plafond du Nether.
+   */
+  private applyDimensionSky(st: SkyState): void {
+    const e = this.env;
+    const nether = this.dimension === 'nether';
+    // Le soleil vient d'en haut, sans azimut : pas d'ombres rasantes absurdes.
+    (e.uSunDir.value as Vector3).set(0.35, 0.92, 0.18).normalize();
+    (e.uSunColor.value as Color).setHex(nether ? 0x6a2a20 : 0x342a4a);
+    (e.uZenith.value as Color).setHex(nether ? 0x1c0806 : 0x05040c);
+    (e.uHorizon.value as Color).setHex(nether ? 0x50130e : 0x120c22);
+    (e.uSkyLight.value as Color).setHex(nether ? 0x53231a : 0x2a2438);
+    (e.uAmbient.value as Color).setHex(nether ? 0x4a2018 : 0x1e1a30);
+    e.uDayFactor.value = 1;
+    e.uStarStrength.value = nether ? 0 : 1;
+    e.uRain.value = 0;
+    (e.uFogColor.value as Color).setHex(nether ? 0x30100c : 0x0a0812);
+    (e.uFogSky.value as Color).setHex(nether ? 0x50130e : 0x120c22);
+    // Brume beaucoup plus dense dans le Nether : l'horizon doit se fermer.
+    const far = this.settings.renderDistance * CHUNK_X;
+    e.uFogDensity.value = (1.35 / Math.max(48, far)) * (nether ? 2.4 : 1.1);
+    void st;
   }
 
   private updateWeather(dt: number, active: boolean): void {
@@ -1413,6 +1502,21 @@ export class Game {
       if (key === 'crafting_table') { this.openInventory('crafting'); return; }
       if (key === 'furnace') { this.openContainer(hit, 'furnace'); return; }
       if (key === 'chest') { this.openContainer(hit, 'chest'); return; }
+      // Sertir un œil de l'Ender dans un cadre de portail.
+      if (key === 'end_portal_frame' && this.fillPortalFrame(hit.x, hit.y, hit.z)) return;
+    }
+
+    // Le briquet allume un cadre d'obsidienne : c'est la porte du Nether.
+    if (hit && stackHeld?.item.key === 'flint_and_steel') {
+      const tx = hit.x + hit.nx, ty = hit.y + hit.ny, tz = hit.z + hit.nz;
+      if (this.ignitePortal(tx, ty, tz)) {
+        this.heldView.swing = 1;
+        if (this.player.mode !== GameMode.Creative && this.inventory.damageSelected(1)) this.audio.break('metal');
+        return;
+      }
+      this.hud.toast('Il faut un cadre d’obsidienne fermé.');
+      this.heldView.swing = 1;
+      return;
     }
 
     if (!stackHeld) return;
@@ -1494,6 +1598,251 @@ export class Game {
     if (!kind) return;
     this.lootedChests.add(key);
     for (const [slot, stack] of rollLoot(kind, x, y, z, c.size)) c.set(slot, stack);
+  }
+
+  // --- Dimensions et portails ---------------------------------------------
+
+  /**
+   * Allume un cadre d'obsidienne. On part du bloc visé, on cherche le rectangle
+   * d'air borné par de l'obsidienne dans l'un des deux plans verticaux, et on
+   * le remplit de blocs de portail.
+   *
+   * @returns vrai si un portail a été allumé.
+   */
+  private ignitePortal(x: number, y: number, z: number): boolean {
+    for (const axis of ['x', 'z'] as const) {
+      const cells = this.portalInterior(x, y, z, axis);
+      if (!cells) continue;
+      for (const [px, py, pz] of cells) this.setBlock(px, py, pz, B.nether_portal);
+      this.audio.explosion();
+      this.hud.toast('Le portail s’ouvre.');
+      return true;
+    }
+    return false;
+  }
+
+  /**
+   * Remplissage par diffusion de l'air d'un plan vertical, borné par de
+   * l'obsidienne. Renvoie `null` si la zone fuit, dépasse 40 cases, ou n'est pas
+   * assez haute pour qu'on la traverse.
+   */
+  private portalInterior(x: number, y: number, z: number, axis: 'x' | 'z'): [number, number, number][] | null {
+    const seen = new Set<string>();
+    const out: [number, number, number][] = [];
+    const stack: [number, number, number][] = [[x, y, z]];
+    let minY = y, maxY = y;
+    while (stack.length) {
+      const [cx, cy, cz] = stack.pop()!;
+      const k = `${cx},${cy},${cz}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const id = this.world.getBlock(cx, cy, cz);
+      if (id === B.obsidian || id === B.glowing_obsidian) continue; // bord du cadre
+      if (id !== 0) return null; // autre chose que de l'air : le cadre n'est pas propre
+      if (out.length > 40) return null;
+      out.push([cx, cy, cz]);
+      if (cy < minY) minY = cy;
+      if (cy > maxY) maxY = cy;
+      stack.push([cx, cy + 1, cz], [cx, cy - 1, cz]);
+      if (axis === 'x') stack.push([cx + 1, cy, cz], [cx - 1, cy, cz]);
+      else stack.push([cx, cy, cz + 1], [cx, cy, cz - 1]);
+    }
+    if (out.length < 6 || maxY - minY < 2) return null;
+    return out;
+  }
+
+  /**
+   * Le joueur est-il dans un bloc de portail ? Deux secondes suffisent à
+   * basculer — assez pour qu'on puisse ressortir sans le vouloir.
+   */
+  private updatePortals(dt: number): void {
+    if (this.portalCooldown > 0) this.portalCooldown -= dt;
+    const p = this.player.position;
+    const head = this.world.getBlock(Math.floor(p.x), Math.floor(p.y + 0.9), Math.floor(p.z));
+    const feet = this.world.getBlock(Math.floor(p.x), Math.floor(p.y + 0.1), Math.floor(p.z));
+    const at = head === B.nether_portal || head === B.end_portal ? head : feet;
+    const inPortal = at === B.nether_portal || at === B.end_portal;
+    if (!inPortal || this.portalCooldown > 0) {
+      this.portalTimer = 0;
+      return;
+    }
+    this.portalTimer += dt;
+    const delay = at === B.end_portal ? 1.2 : 2;
+    if (this.portalTimer < delay) return;
+    this.portalTimer = 0;
+    if (at === B.end_portal) {
+      void this.travelTo(this.dimension === 'end' ? 'overworld' : 'end');
+    } else {
+      void this.travelTo(this.dimension === 'nether' ? 'overworld' : 'nether');
+    }
+  }
+
+  /**
+   * Change de dimension : on démonte le monde courant, on en reconstruit un
+   * avec l'autre générateur, et on dépose le joueur sur une plate-forme sûre.
+   * L'inventaire, l'heure et le temps de jeu ne bougent pas.
+   */
+  private async travelTo(to: Dimension): Promise<void> {
+    if (!this.save || this.dimension === to) return;
+    const from = this.dimension;
+    this.sessionReady = false;
+    this.setLoading(true, to === 'nether' ? 'Descente dans le Nether…' : to === 'end' ? 'Passage vers l’End…' : 'Retour au monde…');
+    await frame();
+
+    // On retient d'où l'on vient pour ressortir au bon endroit.
+    if (from === 'overworld') this.returnPos = this.player.position.clone();
+    for (const c of this.world.chunks.values()) if (c.edits?.size) this.save.storeEdits(c.cx, c.cz, c.edits);
+    await this.save.flush();
+
+    // Les conteneurs restent attachés à leur dimension.
+    this.dimEntities.set(from, new Map(this.blockEntities));
+    this.teardownDimension();
+
+    this.dimension = to;
+    this.save.dimension = to;
+    this.save.meta.dimension = to;
+    this.blockEntities = this.dimEntities.get(to) ?? new Map();
+    this.buildDimension(this.save.meta.seed);
+
+    // Où atterrir. Dans le Nether, on divise les coordonnées par huit : c'est
+    // ce qui rend le raccourci utile.
+    const p = this.player.position;
+    if (to === 'nether') this.player.position.set(Math.round(p.x / 8) + 0.5, NETHER_LAVA + 14, Math.round(p.z / 8) + 0.5);
+    else if (to === 'end') this.player.position.set(0.5, 84, 0.5);
+    else if (this.returnPos) this.player.position.copy(this.returnPos);
+    else this.player.position.set(Math.round(p.x * 8) + 0.5, WORLD_HEIGHT - 8, Math.round(p.z * 8) + 0.5);
+    this.player.velocity.set(0, 0, 0);
+
+    this.arrivedFrom = from;
+    this.worldReady = false;
+    this.sessionReady = true;
+    this.portalCooldown = 4;
+    this.chunks.setCenter(this.player.position.x, this.player.position.z);
+  }
+
+  /** Dimension quittée au dernier voyage, pour construire la plate-forme d'arrivée. */
+  private arrivedFrom: Dimension | null = null;
+
+  /** Démonte tout ce qui appartient à la dimension quittée. */
+  private teardownDimension(): void {
+    if (this.chunks) { this.chunks.dispose(); this.scene.remove(this.chunks.group); }
+    if (this.pool) this.pool.dispose();
+    if (this.particles) this.scene.remove(this.particles.mesh);
+    for (const m of this.mobs) { this.entityGroup.remove(m.group); m.dispose(); }
+    for (const d of this.drops) { this.entityGroup.remove(d.object); d.dispose(); }
+    this.mobs = [];
+    this.drops = [];
+    this.lootedChests.clear();
+  }
+
+  /**
+   * Creuse une poche d'arrivée et y dresse un portail de retour. Sans ça, on
+   * apparaîtrait volontiers dans la roche ou au-dessus d'une mer de lave.
+   */
+  private buildArrivalPlatform(): void {
+    const p = this.player.position;
+    // De retour chez soi, le portail construit à l'aller est toujours en place :
+    // on repose le joueur dessus sans rien creuser.
+    if (this.dimension === 'overworld' && this.returnPos) {
+      this.player.position.copy(this.returnPos);
+      this.player.velocity.set(0, 0, 0);
+      this.hud.toast('De retour au grand air.');
+      return;
+    }
+    const bx = Math.floor(p.x), bz = Math.floor(p.z);
+    let by = Math.floor(p.y);
+
+    if (this.dimension === 'nether') {
+      // On cherche une poche d'air posée sur du solide, en partant du milieu de
+      // la couche jouable. À défaut, on se pose franchement au-dessus de la
+      // lave : mieux vaut une plate-forme suspendue qu'un bain.
+      by = NETHER_LAVA + 12;
+      for (let y = 78; y > NETHER_LAVA + 4; y--) {
+        const below = this.world.getBlock(bx, y - 1, bz);
+        if (below <= 0 || below === B.lava || !IS_SOLID[below]) continue;
+        let clear = true;
+        for (let h = 0; h < 4; h++) if (this.world.getBlock(bx, y + h, bz) !== 0) { clear = false; break; }
+        if (clear) { by = y; break; }
+      }
+    } else if (this.dimension === 'end') {
+      by = 0;
+      for (let y = WORLD_HEIGHT - 2; y > 4; y--) {
+        if (this.world.getBlock(bx, y, bz) !== 0) { by = y + 1; break; }
+      }
+      if (by === 0) by = 66;
+    }
+
+    // Socle dégagé sur quatre de haut. Dans l'End il s'étire vers l'est pour
+    // loger aussi le portail de retour.
+    const floor = this.dimension === 'end' ? B.end_stone : B.obsidian;
+    const xMax = this.dimension === 'end' ? 5 : 2;
+    for (let dz = -2; dz <= 2; dz++)
+      for (let dx = -2; dx <= xMax; dx++) {
+        this.setBlock(bx + dx, by - 1, bz + dz, floor);
+        for (let dy = 0; dy < 4; dy++) this.setBlock(bx + dx, by + dy, bz + dz, 0);
+      }
+
+    // Portail de retour, sauf dans l'End où c'est celui du sol qui compte.
+    if (this.dimension !== 'end') {
+      for (let dy = -1; dy <= 4; dy++)
+        for (let dx = -1; dx <= 2; dx++) {
+          const frame = dy === -1 || dy === 4 || dx === -1 || dx === 2;
+          this.setBlock(bx + dx, by + dy, bz - 2, frame ? B.obsidian : B.nether_portal);
+        }
+    } else {
+      // L'End : le portail de retour est un carré au ras du sol, trois blocs
+      // plus loin — assez pour ne pas repartir dès l'arrivée.
+      for (let dz = -1; dz <= 1; dz++)
+        for (let dx = -1; dx <= 1; dx++) {
+          this.setBlock(bx + 3 + dx, by - 1, bz + dz, B.obsidian);
+          this.setBlock(bx + 3 + dx, by, bz + dz, B.end_portal);
+        }
+    }
+
+    this.player.position.set(bx + 0.5, by + 0.02, bz + 0.5);
+    this.player.velocity.set(0, 0, 0);
+    this.hud.toast(
+      this.dimension === 'nether' ? 'Bienvenue dans le Nether.'
+        : this.dimension === 'end' ? 'Bienvenue dans l’End.'
+          : 'De retour au grand air.',
+    );
+  }
+
+  /**
+   * Sertit un œil de l'Ender dans un cadre. Quand les douze sont garnis, le
+   * bassin s'ouvre sur l'End.
+   */
+  private fillPortalFrame(x: number, y: number, z: number): boolean {
+    if (this.world.getBlock(x, y, z) !== B.end_portal_frame) return false;
+    const held = this.inventory.selectedStack;
+    const creative = this.player.mode === GameMode.Creative;
+    if (!creative && held?.item.key !== 'eye_of_ender') return false;
+    this.setBlock(x, y, z, B.end_portal_frame_filled);
+    if (!creative) this.inventory.main.consume(this.inventory.selected);
+    this.audio.craft();
+    this.hud.updateHotbar(this.inventory, true);
+    this.tryOpenEndPortal(x, y, z);
+    return true;
+  }
+
+  /** Cherche l'anneau complet autour du cadre serti et remplit le bassin. */
+  private tryOpenEndPortal(x: number, y: number, z: number): void {
+    // Le centre du bassin est à deux blocs du cadre, sur l'un des quatre côtés.
+    for (const [dx, dz] of [[2, 0], [-2, 0], [0, 2], [0, -2]] as const) {
+      const cx = x + dx, cz = z + dz;
+      let complete = true;
+      for (let d = -1; d <= 1 && complete; d++) {
+        for (const [fx, fz] of [[d, -2], [d, 2], [-2, d], [2, d]] as const) {
+          if (this.world.getBlock(cx + fx, y, cz + fz) !== B.end_portal_frame_filled) { complete = false; break; }
+        }
+      }
+      if (!complete) continue;
+      for (let iz = -1; iz <= 1; iz++)
+        for (let ix = -1; ix <= 1; ix++) this.setBlock(cx + ix, y, cz + iz, B.end_portal);
+      this.audio.explosion();
+      this.hud.toast('Le portail de l’End s’ouvre !');
+      return;
+    }
   }
 
   // --- Mode « oneblock » ---------------------------------------------------
@@ -1712,6 +2061,7 @@ export class Game {
     if (this.mobs.length >= this.settings.maxMobs) return;
     if (this.player.mode === GameMode.Spectator) return;
     if (this.worldType === 'oneblock') return; // ici, tout sort du bloc
+    if (this.dimension !== 'overworld') { this.trySpawnDimensionMob(); return; }
 
     // Un village proche peuple d'abord ses propres habitants.
     if (this.trySpawnVillagers()) return;
@@ -1721,7 +2071,9 @@ export class Game {
     const night = this.skyState.dayFactor < 0.25;
     const hostile = night ? Math.random() < 0.75 : Math.random() < 0.2;
     const kinds: MobKind[] = hostile
-      ? ['zombie', 'skeleton', 'creeper', 'spider', 'bloop']
+      ? night && Math.random() < 0.12
+        ? ['enderman'] // l'enderman ne sort que la nuit, et rarement
+        : ['zombie', 'skeleton', 'creeper', 'spider', 'bloop']
       : ['pig', 'cow', 'sheep', 'chicken'];
     const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const def = MOBS[kind];
@@ -1758,7 +2110,16 @@ export class Game {
       if (m.kind === 'villager') villagers++;
       else if (m.kind === 'iron_golem') golems++;
     }
-    const kind: MobKind | null = villagers < 6 ? 'villager' : golems < 1 ? 'iron_golem' : null;
+    let idiots = 0;
+    for (const m of this.mobs) {
+      if (m.kind === 'village_idiot' && Math.hypot(m.position.x - v.x, m.position.z - v.z) <= 34) idiots++;
+    }
+    // Chaque village a le sien — et un seul, il est déjà bien assez.
+    const kind: MobKind | null =
+      villagers < 5 ? 'villager'
+        : idiots < 1 ? 'village_idiot'
+          : golems < 1 ? 'iron_golem'
+            : null;
     if (!kind) return false;
 
     const def = MOBS[kind];
@@ -1771,6 +2132,44 @@ export class Game {
     if (Math.hypot(spot.x - v.x, spot.z - v.z) > 30) return false;
     this.addMob(kind, spot.x, spot.y, spot.z);
     return true;
+  }
+
+  /**
+   * Peuplement du Nether et de l'End. Aucune notion de jour ni de niveau de
+   * lumière ici : tout ce qui apparaît est hostile, et les braises ont besoin
+   * d'un vide où flotter.
+   */
+  private trySpawnDimensionMob(): void {
+    const nether = this.dimension === 'nether';
+    const kinds: MobKind[] = nether
+      ? ['blaze', 'blaze', 'enderman', 'zombie', 'bloop']
+      : ['enderman', 'enderman', 'bloop'];
+    const kind = kinds[Math.floor(Math.random() * kinds.length)];
+    const def = MOBS[kind];
+    const p = this.player.position;
+
+    if (def.flies) {
+      // Une braise apparaît en l'air, quelque part au-dessus d'un sol.
+      for (let t = 0; t < 14; t++) {
+        const x = Math.floor(p.x + (Math.random() - 0.5) * 60);
+        const z = Math.floor(p.z + (Math.random() - 0.5) * 60);
+        const y = Math.floor(p.y + (Math.random() - 0.5) * 24);
+        if (y < 6 || y > WORLD_HEIGHT - 6) continue;
+        if (this.world.getBlock(x, y, z) !== 0 || this.world.getBlock(x, y + 1, z) !== 0) continue;
+        if (Math.hypot(x - p.x, y - p.y, z - p.z) < 14) continue;
+        this.addMob(kind, x + 0.5, y, z + 0.5);
+        return;
+      }
+      return;
+    }
+
+    const spot = findSpawnSpot(
+      this.world, p.x, p.z,
+      Math.max(4, p.y - 24), Math.min(WORLD_HEIGHT - 4, p.y + 24),
+      () => Math.random(), false, def.width, def.height,
+    );
+    if (!spot || spot.distanceTo(p) < 16) return;
+    this.addMob(kind, spot.x, spot.y, spot.z);
   }
 
   private trySpawnKraken(): boolean {
@@ -2026,7 +2425,8 @@ export class Game {
     this.hud.setDebug(
       `VoxelCraft — ${this.fps.toFixed(0)} FPS\n` +
       `XYZ ${p.position.x.toFixed(2)} / ${p.position.y.toFixed(2)} / ${p.position.z.toFixed(2)}\n` +
-      `Chunk ${floorDiv(bx, CHUNK_X)}, ${floorDiv(bz, CHUNK_Z)}   Biome ${biome}\n` +
+      `Chunk ${floorDiv(bx, CHUNK_X)}, ${floorDiv(bz, CHUNK_Z)}   ` +
+      `${this.dimension === 'overworld' ? `Biome ${biome}` : this.dimension === 'nether' ? 'Nether' : 'End'}\n` +
       `Lumière ciel ${light >> 4} · blocs ${light & 15}\n` +
       `Heure ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}  (jour ${this.skyState.dayFactor.toFixed(2)})\n` +
       `Chunks ${s.meshed}/${s.loaded} · gén ${s.pendingGen} · maillage ${s.pendingMesh} · upload ${s.uploadQueue}\n` +
@@ -2091,6 +2491,8 @@ export class Game {
   /** Les ombres s'effacent au crépuscule : rasantes, elles deviennent fausses. */
   private shadowStrength(): number {
     if (!this.settings.shadows) return 0;
+    // Ni le Nether ni l'End n'ont de soleil : pas d'ombres portées non plus.
+    if (this.dimension !== 'overworld') return 0;
     const elev = this.skyState.sunDir.y;
     return Math.max(0, Math.min(1, (elev - 0.06) / 0.18)) * 0.92;
   }
@@ -2100,9 +2502,15 @@ export class Game {
     if (this.sessionReady && this.worldReady) {
       this.renderShadowPass();
       this.renderer.setRenderTarget(this.post.renderTarget);
+      // Hors de l'Overworld il n'y a pas de ciel à dessiner : on efface
+      // directement avec la couleur de brume, et le brouillard fait le reste.
+      const other = this.dimension !== 'overworld';
+      this.sky.mesh.visible = !other;
+      if (other) this.renderer.setClearColor(this.dimension === 'nether' ? 0x2a0d0a : 0x07060e, 1);
       this.renderer.clear();
       this.renderer.render(this.scene, this.camera);
-      const vis = projectSun(this.skyState.sunDir, this.camera, sunScreen) * this.skyState.dayFactor;
+      // Ni soleil ni rayons crépusculaires ailleurs que dans l'Overworld.
+      const vis = other ? 0 : projectSun(this.skyState.sunDir, this.camera, sunScreen) * this.skyState.dayFactor;
       this.post.render(sunScreen, vis);
     } else {
       // Menus : fond animé simple.
@@ -2133,6 +2541,10 @@ export class Game {
       main: this.inventory.main.serialize(), armor: this.inventory.armor.serialize(),
       spawn: [this.spawnPoint.x, this.spawnPoint.y, this.spawnPoint.z],
     };
+    this.save.meta.dimension = this.dimension;
+    this.save.meta.returnPos = this.returnPos
+      ? [this.returnPos.x, this.returnPos.y, this.returnPos.z]
+      : undefined;
     await this.save.savePlayer(state);
     await this.save.flush();
     if (final) this.hud.toast('Partie sauvegardée.');

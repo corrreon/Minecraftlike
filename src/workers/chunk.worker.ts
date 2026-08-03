@@ -4,10 +4,10 @@
  * Un pool de ces workers est piloté par `WorkerPool` sur le thread principal.
  */
 
-import { TerrainGenerator, type WorldType } from '../world/generator';
+import { TerrainGenerator, type GenKind } from '../world/generator';
 import { meshChunk } from '../world/mesher';
 
-export interface InitMsg { type: 'init'; seed: number; worldType?: WorldType }
+export interface InitMsg { type: 'init'; seed: number; worldType?: GenKind }
 export interface GenMsg { type: 'gen'; job: number; cx: number; cz: number }
 export interface MeshMsg { type: 'mesh'; job: number; cx: number; cz: number; rev: number; blocks: ArrayBuffer; light: ArrayBuffer }
 export type WorkerRequest = InitMsg | GenMsg | MeshMsg;

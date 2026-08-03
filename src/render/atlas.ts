@@ -745,6 +745,136 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
   purpur: (t, r) => { grainy(t, rgb(0xa878a8), r, 0.13, 4); speckle(t, rgb(0xc09ac0), r, 20, 1.06); },
   nether_bricks: (t, r) => brickPattern(t, rgb(0x36191d), rgb(0x221013), r, 8, 16),
 
+  // --- Nether et End -------------------------------------------------------
+  netherrack: (t, r) => {
+    // Roche fibreuse : des veines sombres au lieu de grains isolés.
+    grainy(t, rgb(0x7a2b2f), r, 0.34, 5);
+    const n = tileNoise(9, r);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const v = n[y * TILE + x];
+        if (v < 0.34) { t.mul(x, y, 0.6); t.setHeight(x, y, 0.25); }
+        else if (v > 0.76) { t.mul(x, y, 1.22); t.setHeight(x, y, 0.85); }
+      }
+    speckle(t, rgb(0x4a1418), r, 30, 0.9);
+  },
+  soul_sand: (t, r) => {
+    grainy(t, rgb(0x574134), r, 0.2, 5);
+    // Trois visages en creux, à peine lisibles : c'est ce qui fait le bloc.
+    for (const [cx, cy] of [[4, 5], [11, 4], [7, 11]] as const) {
+      for (const [dx, dy] of [[0, 0], [2, 0], [0, 2], [1, 3], [2, 2]] as const) {
+        t.px(cx + dx - 1, cy + dy - 1, rgb(0x33241c), 255, 0.9);
+        t.pxHeight(cx + dx - 1, cy + dy - 1, 0.12);
+      }
+    }
+    speckle(t, rgb(0x6b5342), r, 24, 1.05);
+  },
+  magma: (t, r) => {
+    // Croûte sombre parcourue de fissures incandescentes.
+    grainy(t, rgb(0x30170f), r, 0.3, 5);
+    const n = fbmTile(r, 4);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const v = n[y * TILE + x];
+        if (v > 0.62) {
+          const hot = (v - 0.62) / 0.38;
+          t.set(x, y, rgb(0xff8a1e), 255, 0.55 + hot * 0.85);
+          t.setHeight(x, y, 0.15);
+        } else t.setHeight(x, y, 0.8);
+      }
+  },
+  glowing_obsidian: (t, r) => {
+    grainy(t, rgb(0x14101f), r, 0.5, 4);
+    speckle(t, rgb(0x4a3a72), r, 18, 1.4);
+    // Les fissures pleurent une lueur violette.
+    for (let i = 0; i < 5; i++) {
+      let x = r() * TILE, y = r() * TILE, a = r() * Math.PI * 2;
+      for (let k = 0; k < 16; k++) {
+        a += (r() - 0.5) * 0.9;
+        x = (x + Math.cos(a) + TILE) % TILE;
+        y = (y + Math.sin(a) + TILE) % TILE;
+        t.set(x | 0, y | 0, rgb(0xb26ce8), 255, 0.9 + r() * 0.4);
+        t.setHeight(x | 0, y | 0, 0.2);
+      }
+    }
+  },
+  ancient_debris: (t, r) => {
+    // Base netherrack, mais le minerai est une croûte métallique, pas des grains.
+    grainy(t, rgb(0x4a2a24), r, 0.3, 5);
+    const n = tileNoise(4, r);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const v = n[y * TILE + x];
+        if (v > 0.58) {
+          t.set(x, y, rgb(0x6d5346), 255, 0.8 + v * 0.5);
+          t.setHeight(x, y, 0.95);
+        }
+      }
+    speckle(t, rgb(0x8a6f5e), r, 16, 1.1);
+  },
+  netherite_block: (t, r) => {
+    metalTile(t, r, 0x463a3d);
+    speckle(t, rgb(0x6b585c), r, 22, 1.15);
+    speckle(t, rgb(0x2a2224), r, 18, 0.9);
+  },
+  nether_quartz_ore: (t, r) => {
+    grainy(t, rgb(0x7a2b2f), r, 0.3, 5);
+    const n = tileNoise(5, r);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const v = n[y * TILE + x];
+        if (v > 0.7) { t.set(x, y, rgb(0xece8e1), 255, 0.85 + v * 0.4); t.setHeight(x, y, 0.9); }
+        else if (v > 0.63) { t.set(x, y, rgb(0xece8e1), 255, 0.55); t.setHeight(x, y, 0.72); }
+      }
+  },
+  end_stone: (t, r) => {
+    grainy(t, rgb(0xdcdca8), r, 0.12, 4);
+    speckle(t, rgb(0xc4c48a), r, 30, 0.94);
+    speckle(t, rgb(0xf0f0c8), r, 14, 1.06);
+  },
+  end_portal_frame: (t, r) => {
+    grainy(t, rgb(0x3f6a56), r, 0.12, 4);
+    // Assise plus sombre : le cadre se lit comme un socle.
+    for (let y = 10; y < 16; y++) for (let x = 0; x < 16; x++) { t.px(x, y, rgb(0x2c4c3d), 255, 0.95 + r() * 0.1); }
+  },
+  end_portal_frame_top: (t, r) => {
+    grainy(t, rgb(0x4a7a63), r, 0.1, 4);
+    const b = Math.max(1, Math.round(S));
+    for (let i = 0; i < TILE; i++)
+      for (let k = 0; k < b; k++) { t.mul(i, k, 0.82); t.mul(k, i, 0.82); t.mul(i, TILE - 1 - k, 0.82); t.mul(TILE - 1 - k, i, 0.82); }
+  },
+  end_portal_frame_eye: (t, r) => {
+    grainy(t, rgb(0x4a7a63), r, 0.1, 4);
+    // Œil serti au centre.
+    for (let y = 4; y < 12; y++)
+      for (let x = 4; x < 12; x++) {
+        const d = Math.hypot(x - 7.5, y - 7.5);
+        if (d > 4) continue;
+        t.px(x, y, d < 1.6 ? rgb(0xf2f0d8) : rgb(0x2a6a52), 255, 0.9 + r() * 0.25);
+        t.pxHeight(x, y, 0.95);
+      }
+  },
+  nether_portal: (t, r) => {
+    // Voile violet tourbillonnant, semi-transparent.
+    const n = fbmTile(r, 4);
+    const m = tileNoise(6, r);
+    for (let y = 0; y < TILE; y++)
+      for (let x = 0; x < TILE; x++) {
+        const v = n[y * TILE + x] * 0.6 + m[y * TILE + x] * 0.4;
+        t.set(x, y, rgb(0x8a3ad8), Math.round(120 + v * 110), 0.5 + v * 1.1);
+        t.setHeight(x, y, v);
+      }
+  },
+  end_portal: (t, r) => {
+    // Ciel étoilé encastré dans le sol.
+    for (let y = 0; y < TILE; y++) for (let x = 0; x < TILE; x++) t.set(x, y, rgb(0x080a18), 235);
+    for (let i = 0; i < 44; i++) {
+      const x = (r() * TILE) | 0, y = (r() * TILE) | 0;
+      const c = r() < 0.3 ? rgb(0xa8c8ff) : r() < 0.6 ? rgb(0xd8b0ff) : rgb(0xffffff);
+      t.set(x, y, c, 255, 0.6 + r() * 0.9);
+    }
+  },
+
   torch: (t, r) => {
     t.clear();
     for (let y = 6; y < 16; y++) {
@@ -776,6 +906,10 @@ function surfaceOf(name: string): { relief: number; roughness: number } {
   }
   if (name === 'wool') return { relief: 0.6, roughness: 1 };
   if (name === 'lava' || name === 'glowstone' || name === 'sea_lantern') return { relief: 0.4, roughness: 0.75 };
+  if (name === 'nether_portal' || name === 'end_portal') return { relief: 0.2, roughness: 0.1 };
+  if (name === 'netherite_block' || name === 'ancient_debris') return { relief: 0.7, roughness: 0.3 };
+  if (name === 'netherrack' || name === 'magma') return { relief: 1.4, roughness: 0.95 };
+  if (name === 'end_stone' || name.startsWith('end_portal_frame')) return { relief: 0.8, roughness: 0.85 };
   if (name.endsWith('_ore')) return { relief: 1.3, roughness: 0.45 };
   if (name === 'cobblestone' || name === 'mossy_cobblestone' || name === 'gravel') return { relief: 1.5, roughness: 0.95 };
   if (name === 'bricks' || name === 'stone_bricks') return { relief: 1.2, roughness: 0.9 };

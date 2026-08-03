@@ -127,7 +127,6 @@ RECIPES.push(shaped(['GG', 'GG'], { G: 'granite' }, 'polished_granite', 4));
 RECIPES.push(shaped(['DD', 'DD'], { D: 'diorite' }, 'polished_diorite', 4));
 RECIPES.push(shaped(['AA', 'AA'], { A: 'andesite' }, 'polished_andesite', 4));
 RECIPES.push(shaped(['SS', 'SS'], { S: 'stone_bricks' }, 'chiseled_stone_bricks'));
-RECIPES.push(shaped(['NN', 'NN'], { N: 'nether_bricks' }, 'nether_bricks', 4));
 RECIPES.push(shaped(['PP', 'PP'], { P: 'prismarine' }, 'dark_prismarine'));
 
 // Béton, terre cuite et verre teinté : un colorant pour huit blocs de base.
@@ -169,6 +168,29 @@ const DYES: [string, string][] = [
   ['redstone', 'magenta_wool'],
 ];
 for (const [dye, out] of DYES) RECIPES.push(shapeless([dye, WOOL], out));
+
+// --- Nether, End et netherite ----------------------------------------------
+// Le briquet allume un cadre d'obsidienne : c'est la clé du Nether.
+RECIPES.push(shaped(['I ', ' F'], { I: 'iron_ingot', F: 'flint' }, 'flint_and_steel'));
+RECIPES.push(shapeless(['gravel', 'gravel', 'gravel', 'gravel'], 'flint'));
+
+// Quatre éclats fondus + quatre lingots d'or donnent un lingot de netherite.
+RECIPES.push(shaped(['SSG', 'SSG', 'GG '], { S: 'netherite_scrap', G: 'gold_ingot' }, 'netherite_ingot'));
+RECIPES.push(shaped(['NNN', 'NNN', 'NNN'], { N: 'netherite_ingot' }, 'netherite_block'));
+RECIPES.push(shapeless(['netherite_block'], 'netherite_ingot', 9));
+
+// L'équipement en netherite s'obtient en améliorant celui en diamant.
+for (const k of ['pickaxe', 'axe', 'shovel', 'sword']) {
+  RECIPES.push(shapeless([`diamond_${k}`, 'netherite_ingot'], `netherite_${k}`));
+}
+for (const p of ['helmet', 'chestplate', 'leggings', 'boots']) {
+  RECIPES.push(shapeless([`diamond_${p}`, 'netherite_ingot'], `netherite_${p}`));
+}
+
+RECIPES.push(shaped(['NN', 'NN'], { N: 'netherrack' }, 'nether_bricks'));
+RECIPES.push(shapeless(['blaze_rod'], 'blaze_powder', 2));
+// L'œil de l'Ender : ce qu'il faut pour rallumer un portail de l'End.
+RECIPES.push(shapeless(['ender_pearl', 'blaze_powder'], 'eye_of_ender'));
 
 // --- Recherche -------------------------------------------------------------
 
