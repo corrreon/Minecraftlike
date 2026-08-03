@@ -10,15 +10,35 @@ function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls?: string, parent?
   return e;
 }
 
+/**
+ * Tout ce que le clavier et la souris savent faire doit être atteignable au
+ * doigt : chaque raccourci du jeu a son équivalent tactile.
+ */
 export interface TouchHandlers {
   onJump(down: boolean): void;
   onSneak(down: boolean): void;
   onAttack(down: boolean): void;
   onUse(down: boolean): void;
+  /** Course (Ctrl au clavier) : bascule, on ne va pas maintenir le doigt. */
+  onSprint(on: boolean): void;
+  /** Double appui sur Sauter : bascule le vol en créatif. */
+  onFly(): void;
   onInventory(): void;
   /** Sélection d'une case de la barre rapide : sans molette ni pavé numérique,
    *  c'est le seul moyen de changer d'objet sur mobile. */
   onSelectSlot(index: number): void;
+  /** Échap. */
+  onPause(): void;
+  /** T ou / : ouvre la console de commandes. */
+  onConsole(): void;
+  /** F / F5 : change de vue. */
+  onCamera(): void;
+  /** F3 : informations de débogage. */
+  onDebug(): void;
+  /** Q : jeter l'objet tenu. */
+  onDrop(): void;
+  /** Clic milieu : prendre le bloc visé. */
+  onPick(): void;
 }
 
 export class Hud {
@@ -198,19 +218,70 @@ export class Hud {
       });
     }
 
-    const mk = (cls: string, label: string, down: (v: boolean) => void, tap?: () => void) => {
-      const b = el('div', `touch-btn ${cls}`, this.touchLayer);
+    /** Bouton maintenu : l'action dure tant que le doigt reste posé. */
+    const hold = (parent: HTMLElement, cls: string, label: string, title: string, down: (v: boolean) => void) => {
+      const b = el('div', `touch-btn ${cls}`, parent);
       b.textContent = label;
-      b.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); down(true); tap?.(); });
+      b.title = title;
+      b.addEventListener('touchstart', (e) => { e.preventDefault(); e.stopPropagation(); down(true); });
       b.addEventListener('touchend', (e) => { e.preventDefault(); e.stopPropagation(); down(false); });
       b.addEventListener('touchcancel', () => down(false));
       return b;
     };
-    mk('jump', '⤒', handlers.onJump);
-    mk('sneak', '⤓', handlers.onSneak);
-    mk('attack', '⛏', handlers.onAttack);
-    mk('use', '▣', handlers.onUse);
-    mk('inv', '☰', () => {}, handlers.onInventory);
+
+    /**
+     * Bouton d'action ponctuelle. On écoute `click` et non `touchstart` :
+     * `preventDefault` sur un `touchstart` empêche le navigateur de considérer
+     * le geste comme une interaction utilisateur, et le clavier virtuel refuse
+     * alors de s'ouvrir quand on focalise la console.
+     */
+    const tap = (parent: HTMLElement, cls: string, label: string, title: string, fn: () => void) => {
+      const b = el('div', `touch-btn ${cls}`, parent);
+      b.textContent = label;
+      b.title = title;
+      b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
+      return b;
+    };
+
+    // Amas d'action, sous le pouce droit.
+    const jump = hold(this.touchLayer, 'jump', '⤒', 'Sauter / voler', handlers.onJump);
+    // Le double appui déclenche le vol explicitement. La détection par fronts
+    // dans la physique suppose une image entre les deux appuis ; en dessous de
+    // dix images par seconde, elle rate le geste.
+    let lastJumpTap = -1;
+    jump.addEventListener('touchstart', () => {
+      const now = performance.now();
+      if (lastJumpTap > 0 && now - lastJumpTap < 340) { handlers.onFly(); lastJumpTap = -1; }
+      else lastJumpTap = now;
+    });
+    hold(this.touchLayer, 'sneak', '⤓', 'S’accroupir / descendre', handlers.onSneak);
+    hold(this.touchLayer, 'attack', '⛏', 'Casser / attaquer', handlers.onAttack);
+    hold(this.touchLayer, 'use', '▣', 'Poser / utiliser', handlers.onUse);
+
+    // Course : une bascule, personne ne garde un doigt sur Ctrl.
+    let sprinting = false;
+    const sprint = tap(this.touchLayer, 'sprint', '»', 'Courir', () => {
+      sprinting = !sprinting;
+      sprint.classList.toggle('active', sprinting);
+      handlers.onSprint(sprinting);
+    });
+
+    // Colonne de menus, en haut à droite.
+    const menu = el('div', 'touch-menu', this.touchLayer);
+    tap(menu, 'inv', '☰', 'Inventaire', handlers.onInventory);
+    tap(menu, 'pause', '❚❚', 'Pause', handlers.onPause);
+    tap(menu, 'console', '>_', 'Console de commandes', handlers.onConsole);
+
+    // Le reste tient dans un tiroir : l'écran d'un téléphone est étroit.
+    const drawer = el('div', 'touch-drawer', menu);
+    const more = tap(menu, 'more', '⋯', 'Plus d’actions', () => {
+      drawer.classList.toggle('open');
+      more.classList.toggle('active', drawer.classList.contains('open'));
+    });
+    tap(drawer, '', '👁', 'Changer de vue', handlers.onCamera);
+    tap(drawer, '', 'ⓘ', 'Informations de débogage', handlers.onDebug);
+    tap(drawer, '', '⤵', 'Jeter l’objet tenu', handlers.onDrop);
+    tap(drawer, '', '⊕', 'Prendre le bloc visé', handlers.onPick);
   }
 }
 

@@ -175,32 +175,45 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Options** : distance de rendu, FOV, échelle de résolution et d'interface,
   bloom, rayons crépusculaires, FXAA, nuages, météo, particules, oscillation de
   caméra, sensibilité, volumes, nombre de créatures.
-- **Contrôles tactiles** détectés automatiquement : joystick virtuel, zone de
-  visée, boutons d'action, et **barre rapide touchable** — sans molette ni pavé
-  numérique, c'est le seul moyen de changer d'objet sur mobile. Les cases
-  rétrécissent pour tenir dans la largeur des écrans étroits.
+- **Contrôles tactiles** détectés automatiquement, et **complets** : joystick
+  virtuel, zone de visée, amas d'action, bascule de course, **barre rapide
+  touchable**, et une colonne de menus donnant accès à l'inventaire, à la
+  pause, à la **console de commandes**, au changement de vue, au débogage, au
+  lâcher d'objet et à la prise du bloc visé. La console remonte au-dessus du
+  clavier virtuel et s'accompagne de ses boutons « envoyer » et « fermer », qui
+  remplacent `Entrée` et `Échap`.
 
 ---
 
 ## Contrôles
 
-| Touche | Action |
-| --- | --- |
-| `Z Q S D` / `W A S D` | Se déplacer |
-| `Espace` | Sauter — double appui : voler (créatif) |
-| `Maj` | S'accroupir / descendre en vol |
-| `Ctrl` | Courir |
-| Clic gauche | Casser un bloc / attaquer |
-| Clic droit | Poser un bloc / utiliser / ouvrir un conteneur |
-| Molette, `1`-`9` | Changer d'objet |
-| Clic milieu | Prendre le bloc visé dans la barre rapide |
-| Clic droit avec un briquet | Allumer un cadre d'obsidienne |
-| `E` | Inventaire |
-| `Q` | Jeter l'objet tenu |
-| `F` / `F5` | Vue à la troisième personne |
-| `F3` | Informations de débogage |
-| `T` ou `/` | Console de commandes |
-| `Échap` | Pause |
+Chaque raccourci a son équivalent au doigt : rien n'est réservé au clavier.
+
+| Action | Clavier / souris | Tactile |
+| --- | --- | --- |
+| Se déplacer | `Z Q S D` / `W A S D` | joystick, en bas à gauche |
+| Sauter | `Espace` | `⤒` |
+| Voler (créatif) | double appui sur `Espace` | double appui sur `⤒` |
+| S'accroupir / descendre en vol | `Maj` | `⤓` |
+| Courir | `Ctrl` | `»` (bascule) |
+| Casser un bloc / attaquer | clic gauche | `⛏` |
+| Poser / utiliser / ouvrir | clic droit | `▣` |
+| Allumer un cadre d'obsidienne | clic droit avec un briquet | `▣` avec un briquet |
+| Changer d'objet | molette, `1`-`9` | appui sur une case de la barre rapide |
+| Prendre le bloc visé | clic milieu | `⊕` |
+| Inventaire | `E` | `☰` |
+| Jeter l'objet tenu | `Q` | `⤵` |
+| Vue à la troisième personne | `F` / `F5` | `👁` |
+| Informations de débogage | `F3` | `ⓘ` |
+| Console de commandes | `T` ou `/` | `>_` |
+| Pause | `Échap` | `❚❚` |
+
+Vue, débogage, lâcher d'objet et prise du bloc visé se rangent dans un tiroir
+qu'ouvre le bouton `⋯` :
+sur l'écran d'un téléphone, mieux vaut ne pas tout afficher d'un coup. Le
+tiroir s'ouvre vers la gauche, et la colonne de menus se couche à l'horizontale
+en mode paysage — vérifié de 320 × 568 à 863 × 360 sans qu'un bouton sorte de
+l'écran.
 
 ---
 

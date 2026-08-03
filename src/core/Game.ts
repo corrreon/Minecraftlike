@@ -60,7 +60,7 @@ import { ChunkState } from '../world/Chunk';
 import { World } from '../world/World';
 import { WorkerPool } from '../world/WorkerPool';
 import { NETHER_LAVA, ONEBLOCK_X, ONEBLOCK_Y, ONEBLOCK_Z, TerrainGenerator, type Dimension, type GenKind, type WorldType } from '../world/generator';
-import { Hud } from '../ui/Hud';
+import { Hud, type TouchHandlers } from '../ui/Hud';
 import { Screens, type FurnaceState } from '../ui/Screens';
 import { buildIcons } from '../ui/icons';
 import { mulberry32 } from '../world/noise';
@@ -683,27 +683,64 @@ export class Game {
     c.id = 'console';
     const log = document.createElement('div');
     log.id = 'console-log';
+    const row = document.createElement('div');
+    row.id = 'console-row';
     const input = document.createElement('input');
     input.id = 'console-input';
     input.type = 'text';
+    // Le clavier virtuel ne doit ni corriger ni capitaliser une commande.
+    input.autocapitalize = 'off';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.enterKeyHint = 'send';
+    input.placeholder = '/aide';
+
+    // Sans touche Entrée ni Échap au doigt, il faut deux boutons.
+    const send = document.createElement('button');
+    send.id = 'console-send';
+    send.type = 'button';
+    send.textContent = '⏎';
+    send.title = 'Envoyer';
+    const close = document.createElement('button');
+    close.id = 'console-close';
+    close.type = 'button';
+    close.textContent = '✕';
+    close.title = 'Fermer';
+
+    row.append(input, send, close);
     c.appendChild(log);
-    c.appendChild(input);
+    c.appendChild(row);
     document.body.appendChild(c);
     this.consoleEl = c;
     this.consoleLog = log;
     this.consoleInput = input;
 
+    const submit = () => {
+      const text = input.value.trim();
+      input.value = '';
+      if (text) this.runCommand(text);
+      this.closeConsole();
+    };
+    send.addEventListener('click', (e) => { e.stopPropagation(); submit(); });
+    close.addEventListener('click', (e) => { e.stopPropagation(); this.closeConsole(); });
+
     input.addEventListener('keydown', (e) => {
       e.stopPropagation();
-      if (e.key === 'Enter') {
-        const text = input.value.trim();
-        input.value = '';
-        if (text) this.runCommand(text);
-        this.closeConsole();
-      } else if (e.key === 'Escape') {
-        this.closeConsole();
-      }
+      if (e.key === 'Enter') submit();
+      else if (e.key === 'Escape') this.closeConsole();
     });
+
+    // Le clavier virtuel rogne la fenêtre par le bas : on remonte la console
+    // d'autant, sinon elle disparaît derrière.
+    const vv = window.visualViewport;
+    if (vv) {
+      const fit = () => {
+        const inset = Math.max(0, window.innerHeight - vv.height - vv.offsetTop);
+        c.style.setProperty('--kb', `${Math.round(inset)}px`);
+      };
+      vv.addEventListener('resize', fit);
+      vv.addEventListener('scroll', fit);
+    }
   }
 
   private consoleOpen = false;
@@ -846,8 +883,15 @@ export class Game {
         else if (a === 'nuit' || a === 'night') this.dayTime = 0.0;
         else if (a === 'aube') this.dayTime = 0.26;
         else if (a === 'crepuscule') this.dayTime = 0.755;
-        else if (Number.isFinite(Number(a))) this.dayTime = mod(Number(a), 1);
-        this.echo(`Heure : ${this.dayTime.toFixed(2)}`);
+        // Au-delà de 1, on comprend des heures : `/time 6` donne bien 6 h du
+        // matin, ce qui est plus naturel qu'une fraction de journée.
+        else if (Number.isFinite(Number(a))) {
+          const n = Number(a);
+          this.dayTime = mod(n > 1 ? n / 24 : n, 1);
+        }
+        const h = Math.floor(this.dayTime * 24);
+        const min = Math.floor(((this.dayTime * 24) % 1) * 60);
+        this.echo(`Heure : ${String(h).padStart(2, '0')}:${String(min).padStart(2, '0')}`);
         break;
       }
       case 'give': {
@@ -1125,17 +1169,60 @@ export class Game {
     }
   }
 
-  private touchHandlers() {
+  /**
+   * Équivalents tactiles de tous les raccourcis clavier. Sans clavier ni
+   * souris, ces callbacks sont le seul accès à la console, à la pause, au
+   * changement de vue et au reste.
+   */
+  private touchHandlers(): TouchHandlers {
     return {
       onJump: (v: boolean) => this.input.setVirtual('jump', v),
       onSneak: (v: boolean) => this.input.setVirtual('sneak', v),
       onAttack: (v: boolean) => this.input.setVirtual('attack', v),
       onUse: (v: boolean) => this.input.setVirtual('use', v),
-      onInventory: () => this.openInventory('inventory'),
+      onSprint: (v: boolean) => this.input.setVirtual('sprint', v),
+      onFly: () => {
+        if (this.player.mode !== GameMode.Creative) return;
+        this.player.flying = !this.player.flying;
+        if (this.player.flying) this.player.velocity.y = 0;
+      },
+      onInventory: () => {
+        if (this.paused) return;
+        if (this.screens.isGameOverlay) this.closeScreen();
+        else if (!this.screens.isOpen) this.openInventory('inventory');
+      },
       onSelectSlot: (i: number) => {
         this.inventory.selected = i;
         this.hud.updateHotbar(this.inventory, true);
         this.audio.click();
+      },
+      onPause: () => {
+        if (this.consoleOpen) { this.closeConsole(); return; }
+        if (this.screens.isOpen) {
+          if (this.screens.isGameOverlay) this.closeScreen();
+          else if (this.screens.active === 'settings' || this.screens.active === 'help') this.screens.show(this.screens.previous);
+          else if (this.screens.active === 'pause') this.closeScreen();
+        } else if (!this.paused) {
+          this.openPause();
+        }
+      },
+      onConsole: () => {
+        if (this.paused || this.screens.isOpen) return;
+        if (this.consoleOpen) this.closeConsole();
+        else this.openConsole('/');
+      },
+      onCamera: () => { this.player.cameraMode = (this.player.cameraMode + 1) % 3; },
+      onDebug: () => {
+        this.settings.showFps = !this.settings.showFps;
+        saveSettings(this.settings);
+      },
+      onDrop: () => {
+        if (this.paused || this.screens.isOpen) return;
+        this.dropSelected();
+      },
+      onPick: () => {
+        if (this.paused || this.screens.isOpen) return;
+        if (this.lastHit) this.pickBlock(this.lastHit.block);
       },
     };
   }

@@ -898,7 +898,8 @@ label.field > span {
   position: absolute;
   left: 0;
   right: 0;
-  bottom: 0;
+  /* `--kb` vaut la hauteur du clavier virtuel, mise à jour par le jeu. */
+  bottom: var(--kb, 0px);
   padding: 10px;
   pointer-events: none;
   display: none;
@@ -921,9 +922,32 @@ label.field > span {
   border-radius: 3px;
 }
 
+#console-row {
+  display: flex;
+  gap: 6px;
+}
+
 #console-input {
+  flex: 1;
+  min-width: 0;
   background: rgba(6, 8, 13, 0.92);
   border: 2px solid var(--border-light);
+}
+
+#console-send,
+#console-close {
+  flex: 0 0 auto;
+  width: 44px;
+  background: rgba(20, 26, 38, 0.92);
+  border: 2px solid var(--border-light);
+  color: #fff;
+  font-size: 16px;
+  cursor: pointer;
+}
+
+#console-send:active,
+#console-close:active {
+  background: rgba(80, 100, 140, 0.85);
 }
 
 /* --- Contrôles tactiles -------------------------------------------------- */
@@ -977,12 +1001,93 @@ label.field > span {
   bottom: 190px;
 }
 
-.touch-btn.inv {
-  right: 22px;
-  top: 22px;
-  width: 46px;
-  height: 46px;
-  font-size: 16px;
+/* Course : une bascule, à portée du pouce gauche qui tient le joystick. */
+.touch-btn.sprint {
+  left: 22px;
+  bottom: 190px;
+  width: 50px;
+  height: 50px;
+  font-size: 22px;
+}
+
+.touch-btn.active {
+  background: rgba(90, 150, 220, 0.75);
+  border-color: rgba(255, 255, 255, 0.6);
+}
+
+/* Colonne de menus en haut à droite : inventaire, pause, console, tiroir. */
+.touch-menu {
+  position: absolute;
+  right: 14px;
+  top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  align-items: flex-end;
+  pointer-events: none;
+}
+
+.touch-menu .touch-btn {
+  position: static;
+  width: 44px;
+  height: 44px;
+  font-size: 15px;
+}
+
+/*
+ * Actions secondaires, repliées par défaut. Le tiroir s'ouvre vers la gauche
+ * et non vers le bas : en paysage, la hauteur disponible ne dépasse pas
+ * quatre boutons, une colonne de huit sortirait de l'écran.
+ */
+.touch-drawer {
+  position: absolute;
+  right: 52px;
+  top: 0;
+  display: none;
+  flex-direction: row;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.touch-drawer.open {
+  display: flex;
+}
+
+/*
+ * Écran bas — un téléphone tenu en paysage. La colonne de menus descendait
+ * jusque dans l'amas d'action : on la couche à l'horizontale le long du bord
+ * haut, et on resserre les boutons d'action vers le bas.
+ */
+@media (max-height: 520px) {
+  .touch-menu {
+    flex-direction: row;
+    align-items: flex-start;
+  }
+
+  .touch-drawer {
+    right: 0;
+    top: 52px;
+  }
+
+  .touch-btn.use {
+    bottom: 148px;
+  }
+
+  .touch-btn.jump {
+    bottom: 120px;
+  }
+
+  .touch-btn.sneak {
+    bottom: 88px;
+  }
+
+  .touch-btn.attack {
+    bottom: 58px;
+  }
+
+  .touch-btn.sprint {
+    bottom: 150px;
+  }
 }
 
 .stick-base {

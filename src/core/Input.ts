@@ -260,8 +260,8 @@ export class Input {
     }
   };
 
-  /** Boutons tactiles exposés par l'interface (casser, poser, sauter…). */
-  setVirtual(button: 'attack' | 'use' | 'jump' | 'sneak', value: boolean): void {
+  /** Boutons tactiles exposés par l'interface (casser, poser, sauter, courir…). */
+  setVirtual(button: 'attack' | 'use' | 'jump' | 'sneak' | 'sprint', value: boolean): void {
     this.state[button] = value;
   }
 
