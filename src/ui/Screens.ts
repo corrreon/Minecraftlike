@@ -30,7 +30,7 @@ export interface ScreenContext {
   settings: Settings;
   applySettings(): void;
   listWorlds(): Promise<WorldMeta[]>;
-  createWorld(name: string, seed: string, mode: number, flat: boolean): void;
+  createWorld(name: string, seed: string, mode: number, type: 'normal' | 'flat' | 'oneblock'): void;
   playWorld(meta: WorldMeta): void;
   deleteWorld(id: string): Promise<void>;
   resume(): void;
@@ -212,8 +212,9 @@ export class Screens {
     el('span', undefined, typeField).textContent = 'Type de monde';
     const typeSelect = el('select', undefined, typeField);
     for (const [v, label] of [
-      ['normal', 'Normal — reliefs, biomes, grottes'],
+      ['normal', 'Normal — reliefs, biomes, grottes, villages'],
       ['flat', 'Superplat — sol uni, idéal pour bâtir'],
+      ['oneblock', 'Oneblock — un seul bloc, à casser sans fin'],
     ] as const) {
       const o = el('option', undefined, typeSelect);
       o.value = v;
@@ -225,7 +226,7 @@ export class Screens {
         nameInput.value.trim() || 'Nouveau monde',
         seedInput.value.trim(),
         Number(modeSelect.value),
-        typeSelect.value === 'flat',
+        typeSelect.value as 'normal' | 'flat' | 'oneblock',
       );
     });
     this.button(p, 'Retour', '', () => this.show('menu'));

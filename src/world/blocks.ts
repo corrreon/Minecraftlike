@@ -165,8 +165,8 @@ function define(key: string, o: BlockOptions): BlockDef {
   return def;
 }
 
-const FOLIAGE_TINT = 0x6cbb3c;
-const GRASS_TINT = 0x79c05a;
+const FOLIAGE_TINT = 0x528e2e;
+const GRASS_TINT = 0x51803c;
 
 // ---------------------------------------------------------------------------
 // L'ordre de déclaration fixe les identifiants numériques : ne jamais insérer
@@ -270,7 +270,7 @@ define('birch_leaves', {
   drop: 'birch_sapling',
   dropCount: [0, 1],
   sound: 'grass',
-  tint: 0x93c771,
+  tint: 0x709756,
   flammable: true,
 });
 define('spruce_leaves', {
@@ -284,7 +284,7 @@ define('spruce_leaves', {
   drop: 'spruce_sapling',
   dropCount: [0, 1],
   sound: 'grass',
-  tint: 0x4d7a4a,
+  tint: 0x3b5d38,
   flammable: true,
 });
 define('jungle_leaves', {
@@ -298,7 +298,7 @@ define('jungle_leaves', {
   drop: 'jungle_sapling',
   dropCount: [0, 1],
   sound: 'grass',
-  tint: 0x54c72a,
+  tint: 0x409720,
   flammable: true,
 });
 
@@ -413,7 +413,7 @@ const cross = (key: string, name: string, texture: string, extra: Partial<BlockO
   });
 
 cross('tall_grass', 'Herbe haute', 'tall_grass', { tint: GRASS_TINT, drop: 'wheat_seeds', dropCount: [0, 1] });
-cross('fern', 'Fougère', 'fern', { tint: 0x5fa04a, drop: 'air' });
+cross('fern', 'Fougère', 'fern', { tint: 0x487a38, drop: 'air' });
 cross('dead_bush', 'Buisson mort', 'dead_bush', { drop: 'stick', dropCount: [0, 2] });
 cross('dandelion', 'Pissenlit', 'dandelion');
 cross('poppy', 'Coquelicot', 'poppy');
@@ -421,10 +421,10 @@ cross('blue_orchid', 'Orchidée bleue', 'blue_orchid');
 cross('brown_mushroom', 'Champignon brun', 'brown_mushroom', { emission: 1, flammable: false });
 cross('red_mushroom', 'Champignon rouge', 'red_mushroom', { flammable: false });
 cross('oak_sapling', 'Pousse de chêne', 'oak_sapling', { tint: FOLIAGE_TINT });
-cross('birch_sapling', 'Pousse de bouleau', 'birch_sapling', { tint: 0x93c771 });
-cross('spruce_sapling', 'Pousse de sapin', 'spruce_sapling', { tint: 0x4d7a4a });
-cross('jungle_sapling', 'Pousse d’acajou', 'jungle_sapling', { tint: 0x54c72a });
-cross('sugar_cane', 'Canne à sucre', 'sugar_cane', { tint: 0x92c866 });
+cross('birch_sapling', 'Pousse de bouleau', 'birch_sapling', { tint: 0x709756 });
+cross('spruce_sapling', 'Pousse de sapin', 'spruce_sapling', { tint: 0x3b5d38 });
+cross('jungle_sapling', 'Pousse d’acajou', 'jungle_sapling', { tint: 0x409720 });
+cross('sugar_cane', 'Canne à sucre', 'sugar_cane', { tint: 0x6f984d });
 cross('torch', 'Torche', 'torch', {
   emission: 14,
   replaceable: false,
@@ -647,4 +647,30 @@ export const B = {
   glowstone: blockId('glowstone'),
   obsidian: blockId('obsidian'),
   mossy_cobblestone: blockId('mossy_cobblestone'),
+  // Matériaux de structures (villages, épaves, portails engloutis).
+  oak_planks: blockId('oak_planks'),
+  birch_planks: blockId('birch_planks'),
+  spruce_planks: blockId('spruce_planks'),
+  jungle_planks: blockId('jungle_planks'),
+  glass: blockId('glass'),
+  stone_bricks: blockId('stone_bricks'),
+  cracked_stone_bricks: blockId('cracked_stone_bricks'),
+  bricks: blockId('bricks'),
+  chest: blockId('chest'),
+  crafting_table: blockId('crafting_table'),
+  furnace: blockId('furnace'),
+  bookshelf: blockId('bookshelf'),
+  prismarine: blockId('prismarine'),
+  dark_prismarine: blockId('dark_prismarine'),
+  sea_lantern: blockId('sea_lantern'),
+  jack_o_lantern: blockId('jack_o_lantern'),
+  quartz_block: blockId('quartz_block'),
+  wheat: blockId('wheat'),
+  oak_slab: blockId('oak_slab'),
+  spruce_slab: blockId('spruce_slab'),
+  cobblestone_slab: blockId('cobblestone_slab'),
+  sandstone_slab: blockId('sandstone_slab'),
+  white_wool: blockId('white_wool'),
+  red_wool: blockId('red_wool'),
+  brown_terracotta: blockId('brown_terracotta'),
 } as const;

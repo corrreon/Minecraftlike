@@ -37,10 +37,11 @@ import {
 import { Input } from './Input';
 import { isTouchDevice, loadSettings, saveSettings, type Settings } from './Settings';
 import { AudioEngine, type SoundGroup } from '../audio/Audio';
-import { Mob, ItemEntity, MOBS, coloredBox, findSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
+import { Mob, ItemEntity, MOBS, coloredBox, findSpawnSpot, findWaterSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
 import { Container, HOTBAR_SIZE, makeStack, type ItemStack } from '../items/Inventory';
 import { Inventory } from '../items/Inventory';
 import { ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, blockDrops, breakInfo, type ItemDef } from '../items/items';
+import { ONEBLOCK_PHASES, phaseFor, pickOneblock, rollLoot } from '../items/loot';
 import { GameMode, Player } from '../player/Player';
 import { raycast, type RaycastHit } from '../player/physics';
 import { TILE, buildAtlas, type Atlas } from '../render/atlas';
@@ -58,6 +59,7 @@ import { biomeDef } from '../world/biomes';
 import { ChunkState } from '../world/Chunk';
 import { World } from '../world/World';
 import { WorkerPool } from '../world/WorkerPool';
+import { ONEBLOCK_X, ONEBLOCK_Y, ONEBLOCK_Z, TerrainGenerator, type WorldType } from '../world/generator';
 import { Hud } from '../ui/Hud';
 import { Screens, type FurnaceState } from '../ui/Screens';
 import { buildIcons } from '../ui/icons';
@@ -122,6 +124,20 @@ export class Game {
   private playtime = 0;
   private timeFrozen = false;
   private mobsEnabled = true;
+
+  // Structures et modes de jeu.
+  /**
+   * Copie du générateur sur le thread principal. Elle ne produit aucun bloc :
+   * elle sert à retrouver les villages alentour (pour y faire apparaître
+   * villageois et golems) et à savoir si un coffre appartient à une structure.
+   */
+  private structGen: TerrainGenerator | null = null;
+  private worldType: WorldType = 'normal';
+  /** Coffres de structures déjà remplis, pour ne pas les regarnir. */
+  private lootedChests = new Set<string>();
+  /** Mode « oneblock » : compteur de blocs cassés et phase courante. */
+  private oneblockCount = 0;
+  private oneblockPhase = '';
   private rainTarget = 0;
   private rainLevel = 0;
   private weatherTimer = 120;
@@ -217,6 +233,45 @@ export class Game {
     window.addEventListener('beforeunload', () => void this.persist(true));
   }
 
+  /** Relevé des blocs d'une boîte, par clé : inspection d'une structure. */
+  debugScan(x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (let z = z0; z <= z1; z++) {
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) {
+          const id = this.world.getBlock(x, y, z);
+          if (id <= 0) continue;
+          const k = blockDef(id).key;
+          out[k] = (out[k] ?? 0) + 1;
+        }
+      }
+    }
+    return out;
+  }
+
+  /** Position du premier bloc d'une clé donnée dans une boîte. */
+  debugFind(key: string, x0: number, y0: number, z0: number, x1: number, y1: number, z1: number): number[] | null {
+    const want = BLOCK_BY_KEY.get(key)?.id ?? -1;
+    for (let z = z0; z <= z1; z++) {
+      for (let y = y0; y <= y1; y++) {
+        for (let x = x0; x <= x1; x++) if (this.world.getBlock(x, y, z) === want) return [x, y, z];
+      }
+    }
+    return null;
+  }
+
+  /** Butin qu'un coffre de structure rendrait, sans avoir à l'ouvrir. */
+  debugLoot(x: number, y: number, z: number): { kind: string | null; items: string[] } {
+    const kind = this.structGen?.lootKindAt(x, y, z) ?? null;
+    if (!kind) return { kind: null, items: [] };
+    return { kind, items: [...rollLoot(kind, x, y, z, 27).values()].map((s) => `${s.item.key}×${s.count}`) };
+  }
+
+  /** État du mode « oneblock » : compteur et phase. */
+  debugOneblock(): { type: string; count: number; phase: string } {
+    return { type: this.worldType, count: this.oneblockCount, phase: this.oneblockPhase };
+  }
+
   /**
    * Planche de contact de toutes les tuiles de l'atlas, en data-URL.
    * Sert à inspecter les textures depuis la console sans lancer d'outil.
@@ -306,7 +361,7 @@ export class Game {
 
   // --- Cycle de vie d'un monde -------------------------------------------
 
-  private async createWorld(name: string, seedText: string, mode: number, flat = false): Promise<void> {
+  private async createWorld(name: string, seedText: string, mode: number, type: WorldType = 'normal'): Promise<void> {
     const seed = seedText ? hashSeed(seedText) : (Math.random() * 2 ** 31) | 0;
     const meta: WorldMeta = {
       id: `w_${Date.now().toString(36)}_${Math.floor(Math.random() * 1e6).toString(36)}`,
@@ -317,7 +372,9 @@ export class Game {
       lastPlayed: Date.now(),
       playtime: 0,
       dayTime: 0.42,
-      flat,
+      type,
+      flat: type === 'flat',
+      oneblock: type === 'oneblock' ? 0 : undefined,
     };
     await this.startWorld(meta, true);
   }
@@ -332,9 +389,16 @@ export class Game {
     this.save = await SaveManager.load(this.db, meta);
     if (isNew) await this.save.createOrUpdateMeta();
 
+    // Les mondes créés avant l'arrivée du sélecteur de type n'ont que `flat`.
+    this.worldType = meta.type ?? (meta.flat === true ? 'flat' : 'normal');
+    this.oneblockCount = meta.oneblock ?? 0;
+    this.oneblockPhase = phaseFor(this.oneblockCount).name;
+    this.lootedChests.clear();
+
     this.rnd = mulberry32(meta.seed ^ 0x9e3779b9);
     this.world = new World(meta.seed);
-    this.pool = new WorkerPool(meta.seed, meta.flat === true);
+    this.structGen = this.worldType === 'normal' ? new TerrainGenerator(meta.seed, 'normal') : null;
+    this.pool = new WorkerPool(meta.seed, this.worldType);
     this.particles = new ParticleSystem(this.world);
     this.scene.add(this.particles.mesh);
 
@@ -925,7 +989,8 @@ export class Game {
       this.world.processLighting(60000);
       this.world.flushBorders();
       if (this.chunks.isReadyAt(this.player.position.x, this.player.position.z)) {
-        this.placePlayerOnGround();
+        if (this.worldType === 'oneblock') this.placeOnOneblock();
+        else this.placePlayerOnGround();
         this.worldReady = true;
         this.setLoading(false, '');
         if (!this.input.touchEnabled) this.input.requestLock();
@@ -942,6 +1007,7 @@ export class Game {
       this.accumulator -= step;
       this.player.update(step, this.input.state, this.world, this.elapsed);
       this.handleStepSounds(step);
+      this.guardVoid();
     }
     if (this.player.dead && this.screens.active !== 'death') {
       this.audio.hurt();
@@ -1021,6 +1087,23 @@ export class Game {
       return y;
     }
     return -1;
+  }
+
+  /**
+   * Mode « oneblock » : le joueur ne repart du bloc unique que s'il n'a
+   * vraiment rien sous les pieds — sinon on respecte la plate-forme qu'il
+   * s'est construite.
+   */
+  private placeOnOneblock(): void {
+    this.spawnPoint.set(ONEBLOCK_X + 0.5, ONEBLOCK_Y + 1.02, ONEBLOCK_Z + 0.5);
+    const px = Math.floor(this.player.position.x);
+    const pz = Math.floor(this.player.position.z);
+    for (let y = Math.floor(this.player.position.y); y > Math.floor(this.player.position.y) - 10 && y > 0; y--) {
+      const b = this.world.getBlock(px, y, pz);
+      if (b > 0 && IS_SOLID[b]) return;
+    }
+    this.player.position.copy(this.spawnPoint);
+    this.player.velocity.set(0, 0, 0);
   }
 
   /** Cherche en spirale une colonne de terre ferme autour de la position. */
@@ -1283,6 +1366,10 @@ export class Game {
       }
       this.blockEntities.delete(bkey);
     }
+    // Le bloc unique repousse aussitôt : c'est tout le principe du mode.
+    if (this.worldType === 'oneblock' && hit.x === ONEBLOCK_X && hit.y === ONEBLOCK_Y && hit.z === ONEBLOCK_Z) {
+      this.oneblockAdvance();
+    }
   }
 
   private dropUnsupported(x: number, y: number, z: number): void {
@@ -1385,10 +1472,85 @@ export class Game {
         ? new Container(27)
         : { input: new Container(1), fuel: new Container(1), output: new Container(1), burn: 0, burnMax: 0, progress: 0 };
       this.blockEntities.set(key, be);
+      // Premier ouvre-boîte : si ce coffre appartient à une structure générée,
+      // il se garnit maintenant. Le tirage dépend de sa position, donc revenir
+      // dans le monde après un rechargement redonne exactement le même butin.
+      if (be instanceof Container) this.fillStructureLoot(hit.x, hit.y, hit.z, be);
     }
     this.openBlockPos = key;
     this.input.exitLock();
     this.screens.show(kind);
+  }
+
+  /**
+   * Garnit un coffre de structure. Une fois vidé par le joueur, il ne se
+   * remplit plus : la sauvegarde retient les positions déjà servies.
+   */
+  private fillStructureLoot(x: number, y: number, z: number, c: Container): void {
+    if (!this.structGen) return;
+    const key = `${x},${y},${z}`;
+    if (this.lootedChests.has(key)) return;
+    const kind = this.structGen.lootKindAt(x, y, z);
+    if (!kind) return;
+    this.lootedChests.add(key);
+    for (const [slot, stack] of rollLoot(kind, x, y, z, c.size)) c.set(slot, stack);
+  }
+
+  // --- Mode « oneblock » ---------------------------------------------------
+
+  /**
+   * Le bloc unique vient d'être cassé : on en tire un nouveau dans la table de
+   * la phase courante, avec parfois un coffre ou une créature à la place.
+   */
+  private oneblockAdvance(): void {
+    this.oneblockCount++;
+    if (this.save) this.save.meta.oneblock = this.oneblockCount;
+
+    const phase = phaseFor(this.oneblockCount);
+    if (phase.name !== this.oneblockPhase) {
+      this.oneblockPhase = phase.name;
+      this.hud.toast(`Phase « ${phase.name} » — bloc n° ${this.oneblockCount}`);
+      this.audio.craft();
+    }
+
+    const x = ONEBLOCK_X, y = ONEBLOCK_Y, z = ONEBLOCK_Z;
+    if (this.rnd() < phase.chestChance) {
+      this.setBlock(x, y, z, BLOCK_BY_KEY.get('chest')?.id ?? 0);
+      const c = new Container(27);
+      // Le compteur entre dans la graine : deux coffres successifs diffèrent.
+      for (const [slot, stack] of rollLoot(phase.chestLoot, x + this.oneblockCount, y, z, c.size)) c.set(slot, stack);
+      this.blockEntities.set(`${x},${y},${z}`, c);
+    } else {
+      const def = BLOCK_BY_KEY.get(pickOneblock(phase, () => this.rnd()));
+      this.setBlock(x, y, z, def?.id ?? 0);
+    }
+
+    if (this.mobsEnabled && this.mobs.length < this.settings.maxMobs && this.rnd() < phase.mobChance) {
+      const kinds = phase.mobs as readonly MobKind[];
+      const kind = kinds[Math.floor(this.rnd() * kinds.length)];
+      const m = new Mob(kind, x + 0.5, y + 1.2, z + 0.5, this.env, (this.rnd() * 1e9) | 0);
+      this.mobs.push(m);
+      this.entityGroup.add(m.group);
+    }
+  }
+
+  /** Blocs restants avant la phase suivante, ou -1 s'il n'y en a plus. */
+  private nextPhaseIn(): number {
+    for (const p of ONEBLOCK_PHASES) if (p.from > this.oneblockCount) return p.from - this.oneblockCount;
+    return -1;
+  }
+
+  /** Le vide n'est pas une mort définitive : on renvoie le joueur sur l'île. */
+  private guardVoid(): void {
+    if (this.worldType !== 'oneblock') return;
+    if (this.player.position.y > -18) return;
+    this.player.position.copy(this.spawnPoint);
+    this.player.velocity.set(0, 0, 0);
+    if (this.player.mode === GameMode.Survival) {
+      this.player.damage(4, false, this.inventory.totalDefense());
+      this.audio.hurt();
+    }
+    this.hud.toast('Rattrapé de justesse au bord du vide.');
   }
 
   private blocksPlayer(x: number, y: number, z: number, id: number): boolean {
@@ -1473,6 +1635,7 @@ export class Game {
     if (!active) return;
     const maxDist = this.settings.entityDistance;
     const dayFactor = this.skyState.dayFactor;
+    this.assignGuardTargets();
 
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
@@ -1526,13 +1689,40 @@ export class Game {
     }
   }
 
+  /**
+   * Chaque golem prend pour cible la créature hostile la plus proche. Sans ça
+   * il resterait planté au milieu du village pendant qu'on l'attaque.
+   */
+  private assignGuardTargets(): void {
+    for (const g of this.mobs) {
+      if (!g.def.guard) continue;
+      let best: Mob | null = null;
+      let bestD = g.def.aggroRange;
+      for (const m of this.mobs) {
+        if (m === g || m.dead || !m.def.hostile) continue;
+        const d = m.position.distanceTo(g.position);
+        if (d < bestD) { bestD = d; best = m; }
+      }
+      g.threat = best;
+    }
+  }
+
   private trySpawnMob(): void {
     if (!this.mobsEnabled) return;
     if (this.mobs.length >= this.settings.maxMobs) return;
     if (this.player.mode === GameMode.Spectator) return;
+    if (this.worldType === 'oneblock') return; // ici, tout sort du bloc
+
+    // Un village proche peuple d'abord ses propres habitants.
+    if (this.trySpawnVillagers()) return;
+    // Le kraken ne se montre qu'en eau profonde.
+    if (Math.random() < 0.16 && this.trySpawnKraken()) return;
+
     const night = this.skyState.dayFactor < 0.25;
     const hostile = night ? Math.random() < 0.75 : Math.random() < 0.2;
-    const kinds: MobKind[] = hostile ? ['zombie', 'skeleton', 'creeper', 'spider'] : ['pig', 'cow', 'sheep', 'chicken'];
+    const kinds: MobKind[] = hostile
+      ? ['zombie', 'skeleton', 'creeper', 'spider', 'bloop']
+      : ['pig', 'cow', 'sheep', 'chicken'];
     const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const def = MOBS[kind];
     const spot = findSpawnSpot(
@@ -1545,7 +1735,56 @@ export class Game {
     );
     if (!spot) return;
     if (spot.distanceTo(this.player.position) < 18) return;
-    const m = new Mob(kind, spot.x, spot.y, spot.z, this.env, (Math.random() * 1e9) | 0);
+    this.addMob(kind, spot.x, spot.y, spot.z);
+  }
+
+  /**
+   * Peuple les villages alentour : quelques villageois, et un golem de fer pour
+   * les garder. Les positions des villages sont recalculées depuis la graine,
+   * sans avoir à les stocker.
+   */
+  private trySpawnVillagers(): boolean {
+    if (!this.structGen) return false;
+    const villages = this.structGen.villagesAround(
+      Math.round(this.player.position.x), Math.round(this.player.position.z), 64,
+    );
+    if (!villages.length) return false;
+    const v = villages[Math.floor(Math.random() * villages.length)];
+
+    // Quota par village : on compte ce qui vit déjà dans son enceinte.
+    let villagers = 0, golems = 0;
+    for (const m of this.mobs) {
+      if (Math.hypot(m.position.x - v.x, m.position.z - v.z) > 34) continue;
+      if (m.kind === 'villager') villagers++;
+      else if (m.kind === 'iron_golem') golems++;
+    }
+    const kind: MobKind | null = villagers < 6 ? 'villager' : golems < 1 ? 'iron_golem' : null;
+    if (!kind) return false;
+
+    const def = MOBS[kind];
+    const spot = findSpawnSpot(
+      this.world, v.x, v.z,
+      Math.max(4, v.y - 6), Math.min(WORLD_HEIGHT - 4, v.y + 10),
+      () => Math.random(), true, def.width, def.height,
+    );
+    if (!spot) return false;
+    if (Math.hypot(spot.x - v.x, spot.z - v.z) > 30) return false;
+    this.addMob(kind, spot.x, spot.y, spot.z);
+    return true;
+  }
+
+  private trySpawnKraken(): boolean {
+    for (const m of this.mobs) if (m.kind === 'kraken') return false;
+    const def = MOBS.kraken;
+    const spot = findWaterSpawnSpot(this.world, this.player.position.x, this.player.position.z, () => Math.random(), def.height);
+    if (!spot) return false;
+    if (spot.distanceTo(this.player.position) < 16) return false;
+    this.addMob('kraken', spot.x, spot.y, spot.z);
+    return true;
+  }
+
+  private addMob(kind: MobKind, x: number, y: number, z: number): void {
+    const m = new Mob(kind, x, y, z, this.env, (Math.random() * 1e9) | 0);
     this.mobs.push(m);
     this.entityGroup.add(m.group);
   }
@@ -1793,7 +2032,9 @@ export class Game {
       `Chunks ${s.meshed}/${s.loaded} · gén ${s.pendingGen} · maillage ${s.pendingMesh} · upload ${s.uploadQueue}\n` +
       `Triangles ${(s.triangles / 1000).toFixed(1)}k · lumière en file ${Math.round(this.world.lightPending)}\n` +
       `Entités ${this.mobs.length} créatures, ${this.drops.length} objets\n` +
-      `Mode ${p.mode === 1 ? 'créatif' : p.mode === 2 ? 'spectateur' : 'survie'}${p.flying ? ' (vol)' : ''}`,
+      `Mode ${p.mode === 1 ? 'créatif' : p.mode === 2 ? 'spectateur' : 'survie'}${p.flying ? ' (vol)' : ''}` +
+      (this.worldType === 'oneblock' ? `\nOneblock — bloc n° ${this.oneblockCount}, phase « ${this.oneblockPhase} »` +
+        `${this.nextPhaseIn() >= 0 ? ` (suivante dans ${this.nextPhaseIn()})` : ''}` : ''),
     );
   }
 

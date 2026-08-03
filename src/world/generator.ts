@@ -17,6 +17,14 @@ import { CHUNK_X, CHUNK_Z, WORLD_HEIGHT, SEA_LEVEL, voxelIndex } from '../core/c
 import { B } from './blocks';
 import { Biome, biomeDef, pickBiome, type TreeKind } from './biomes';
 import { Simplex, fbm2, fbm3, ridged2, mulberry32, hash3, clamp, spline, lerp } from './noise';
+import { emitStructures, villagesNear, type Anchor, type LootKind, type StructCtx } from './structures';
+
+export type WorldType = 'normal' | 'flat' | 'oneblock';
+
+/** Altitude et position du bloc unique du mode « oneblock ». */
+export const ONEBLOCK_X = 0;
+export const ONEBLOCK_Y = 64;
+export const ONEBLOCK_Z = 0;
 
 export interface GenResult {
   blocks: Uint8Array;
@@ -58,12 +66,23 @@ export class TerrainGenerator {
   private colHeight = new Int16Array(CHUNK_X * CHUNK_Z);
   private colBiome = new Uint8Array(CHUNK_X * CHUNK_Z);
 
+  /** Type de monde : relief normal, superplat, ou « oneblock ». */
+  readonly type: WorldType;
   /** Monde superplat : idéal pour bâtir sans terrain qui gêne. */
-  readonly flat: boolean;
+  get flat(): boolean {
+    return this.type === 'flat';
+  }
 
-  constructor(seed: number, flat = false) {
+  /**
+   * Mémo des altitudes, indispensable aux structures : chaque chunk touché par
+   * un village rejoue la totalité de sa construction, ce qui interroge le
+   * relief des centaines de fois aux mêmes coordonnées.
+   */
+  private heightCache = new Map<number, number>();
+
+  constructor(seed: number, type: WorldType = 'normal') {
     this.seed = seed | 0;
-    this.flat = flat;
+    this.type = type;
     const s = this.seed;
     this.nCont = new Simplex(s + 1);
     this.nEro = new Simplex(s + 2);
@@ -94,6 +113,17 @@ export class TerrainGenerator {
 
   /** Altitude du terrain (sommet solide) pour une colonne du monde. */
   heightAt(x: number, z: number): number {
+    // 16 bits par axe : les coordonnées interrogées pendant la génération d'un
+    // chunk tiennent dans quelques centaines de blocs, aucune collision possible.
+    const key = ((x & 0xffff) << 16) | (z & 0xffff);
+    const hit = this.heightCache.get(key);
+    if (hit !== undefined) return hit;
+    const h = this.computeHeight(x, z);
+    this.heightCache.set(key, h);
+    return h;
+  }
+
+  private computeHeight(x: number, z: number): number {
     const cont = this.continentalness(x, z);
     const ero = this.erosion(x, z);
     const base = spline(CONT_SPLINE, cont);
@@ -177,7 +207,10 @@ export class TerrainGenerator {
     const ox = cx * CHUNK_X;
     const oz = cz * CHUNK_Z;
 
-    if (this.flat) return this.generateFlat(blocks, heightmap, biomes);
+    if (this.heightCache.size > 40000) this.heightCache.clear();
+
+    if (this.type === 'flat') return this.generateFlat(blocks, heightmap, biomes);
+    if (this.type === 'oneblock') return this.generateOneblock(blocks, heightmap, biomes, cx, cz);
 
     this.buildCaveGrid(ox, oz);
 
@@ -276,6 +309,17 @@ export class TerrainGenerator {
     // 5) Décoration.
     this.decorate(blocks, heightmap, cx, cz, overflow);
 
+    // 6) Structures. Elles passent en dernier et écrasent ce qu'elles trouvent :
+    //    une maison ne doit pas se retrouver traversée par un arbre.
+    this.placeStructures(blocks, cx, cz);
+    for (let lz = 0; lz < CHUNK_Z; lz++) {
+      for (let lx = 0; lx < CHUNK_X; lx++) {
+        for (let y = WORLD_HEIGHT - 1; y >= 0; y--) {
+          if (blocks[voxelIndex(lx, y, lz)] !== 0) { heightmap[lx + lz * CHUNK_X] = y; break; }
+        }
+      }
+    }
+
     return { blocks, biomes, heightmap, overflow: Int32Array.from(overflow) };
   }
 
@@ -292,6 +336,85 @@ export class TerrainGenerator {
       }
     }
     return { blocks, biomes, heightmap, overflow: new Int32Array(0) };
+  }
+
+  /**
+   * Mode « oneblock » : le monde est intégralement vide, à l'exception d'un
+   * unique bloc à l'origine. Tout le reste vient de ce bloc, que le jeu
+   * régénère à chaque fois qu'on le casse.
+   */
+  private generateOneblock(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
+    biomes.fill(Biome.Plains);
+    const lx = ONEBLOCK_X - cx * CHUNK_X;
+    const lz = ONEBLOCK_Z - cz * CHUNK_Z;
+    if (lx >= 0 && lx < CHUNK_X && lz >= 0 && lz < CHUNK_Z) {
+      blocks[voxelIndex(lx, ONEBLOCK_Y, lz)] = B.grass;
+      heightmap[lx + lz * CHUNK_X] = ONEBLOCK_Y;
+    }
+    return { blocks, biomes, heightmap, overflow: new Int32Array(0) };
+  }
+
+  // --- Structures ---------------------------------------------------------
+
+  /**
+   * Contexte de construction borné à un chunk. Les blocs qui tombent hors des
+   * bornes sont simplement ignorés : le chunk voisin rejouera la même
+   * construction et posera sa part. Rien à propager, rien à synchroniser.
+   */
+  private structCtx(blocks: Uint8Array, ox: number, oz: number, onChest?: (x: number, y: number, z: number, k: LootKind) => void): StructCtx {
+    return {
+      seed: this.seed,
+      heightAt: (x, z) => this.heightAt(x, z),
+      biomeAt: (x, z, h) => this.biomeAt(x, z, h),
+      set: (x, y, z, id, force) => {
+        if (y < 1 || y >= WORLD_HEIGHT) return;
+        const lx = x - ox;
+        const lz = z - oz;
+        if (lx < 0 || lx >= CHUNK_X || lz < 0 || lz >= CHUNK_Z) return;
+        const i = voxelIndex(lx, y, lz);
+        if (force || blocks[i] === 0) blocks[i] = id;
+      },
+      chest: (x, y, z, k) => onChest?.(x, y, z, k),
+    };
+  }
+
+  /** Pose les structures dont l'emprise recoupe le chunk. */
+  private placeStructures(blocks: Uint8Array, cx: number, cz: number): void {
+    const ox = cx * CHUNK_X;
+    const oz = cz * CHUNK_Z;
+    emitStructures(this.structCtx(blocks, ox, oz), ox, oz, ox + CHUNK_X - 1, oz + CHUNK_Z - 1);
+  }
+
+  /**
+   * Nature du butin d'un coffre de structure, ou `null` si ce coffre n'en est
+   * pas un. Le thread principal rejoue la génération des structures autour du
+   * point demandé, sans écrire un seul bloc.
+   */
+  lootKindAt(x: number, y: number, z: number): LootKind | null {
+    let found: LootKind | null = null;
+    const ctx: StructCtx = {
+      seed: this.seed,
+      heightAt: (ax, az) => this.heightAt(ax, az),
+      biomeAt: (ax, az, h) => this.biomeAt(ax, az, h),
+      set: () => {},
+      chest: (cxw, cyw, czw, k) => {
+        if (cxw === x && cyw === y && czw === z) found = k;
+      },
+    };
+    emitStructures(ctx, x, z, x, z);
+    return found;
+  }
+
+  /** Villages proches, pour peupler les environs en villageois et golems. */
+  villagesAround(x: number, z: number, radius: number): Anchor[] {
+    const ctx: StructCtx = {
+      seed: this.seed,
+      heightAt: (ax, az) => this.heightAt(ax, az),
+      biomeAt: (ax, az, h) => this.biomeAt(ax, az, h),
+      set: () => {},
+      chest: () => {},
+    };
+    return villagesNear(ctx, x, z, radius);
   }
 
   // --- Minerais -----------------------------------------------------------

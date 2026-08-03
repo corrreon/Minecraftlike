@@ -350,9 +350,11 @@ function leaves(t: Tile, r: () => number, base: number): void {
         continue;
       }
       // Nervures sombres et éclats clairs : la masse cesse d'être uniforme.
-      let f = 0.52 + v * 0.8;
-      if (grain[i] < 0.3) f *= 0.72;
-      else if (grain[i] > 0.78) f *= 1.18;
+      // La plage reste sous 1 pour que le feuillage tire vers le vert profond
+      // plutôt que vers le vert acide.
+      let f = 0.40 + v * 0.62;
+      if (grain[i] < 0.3) f *= 0.62;
+      else if (grain[i] > 0.78) f *= 1.16;
       t.set(x, y, c, 255, f);
       t.setHeight(x, y, 0.3 + v * 0.65);
     }
@@ -451,7 +453,7 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
 
   dirt: (t, r) => { grainy(t, rgb(0x866043), r, 0.3, 5); speckle(t, rgb(0x6b4a31), r, 40, 0.85); speckle(t, rgb(0x9a7550), r, 18, 1.1); },
   coarse_dirt: (t, r) => { grainy(t, rgb(0x77543a), r, 0.36, 5); speckle(t, rgb(0x5d4029), r, 54, 0.8); },
-  grass_top: (t, r) => { grainy(t, rgb(0xffffff), r, 0.24, 5); speckle(t, rgb(0xdadada), r, 34, 0.94); },
+  grass_top: (t, r) => { grainy(t, rgb(0xe6e6e6), r, 0.26, 5); speckle(t, rgb(0xc2c2c2), r, 34, 0.92); },
   grass_side: (t, r) => {
     grainy(t, rgb(0x866043), r, 0.3, 5);
     speckle(t, rgb(0x6b4a31), r, 30, 0.85);
@@ -461,7 +463,7 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
     for (let x = 0; x < TILE; x++) {
       const h = Math.round(2.2 * S + n[x] * 2.6 * S + (fine[x] > 0.7 ? S : 0));
       for (let y = 0; y < h; y++) {
-        t.set(x, y, rgb(0xffffff), 255, 0.84 + fine[y * TILE + x] * 0.28);
+        t.set(x, y, rgb(0xe6e6e6), 255, 0.84 + fine[y * TILE + x] * 0.28);
         t.setHeight(x, y, 0.75);
       }
     }

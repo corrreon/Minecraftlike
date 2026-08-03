@@ -15,7 +15,7 @@ import {
   Vector3,
   type ShaderMaterial,
 } from 'three';
-import { GRAVITY, TERMINAL_VELOCITY, WORLD_HEIGHT } from '../core/constants';
+import { GRAVITY, SEA_LEVEL, TERMINAL_VELOCITY, WORLD_HEIGHT } from '../core/constants';
 import { createEntityMaterial, voxelLightColor } from '../render/entityMaterial';
 import type { EnvUniforms } from '../render/env';
 import { itemOf, type ItemDef } from '../items/items';
@@ -25,7 +25,10 @@ import type { World } from '../world/World';
 import { moveBox, type Box } from '../player/physics';
 import { mulberry32 } from '../world/noise';
 
-export type MobKind = 'pig' | 'cow' | 'sheep' | 'chicken' | 'zombie' | 'skeleton' | 'creeper' | 'spider';
+export type MobKind =
+  | 'pig' | 'cow' | 'sheep' | 'chicken'
+  | 'zombie' | 'skeleton' | 'creeper' | 'spider'
+  | 'villager' | 'iron_golem' | 'kraken' | 'bloop';
 
 interface MobPart {
   name: string;
@@ -33,10 +36,23 @@ interface MobPart {
   offset: [number, number, number];
   color: number;
   /** Type d'animation appliqué à la pièce. */
-  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'none';
+  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'tentacle' | 'none';
 }
 
-interface MobDef {
+interface MobTraits {
+  /** Créature aquatique : elle nage, et s'échoue hors de l'eau. */
+  aquatic?: boolean;
+  /** Se déplace par bonds plutôt qu'en marchant. */
+  hops?: boolean;
+  /** Gardien : s'en prend aux créatures hostiles proches (golem de fer). */
+  guard?: boolean;
+  /** Riposte contre le joueur quand on la frappe, même si elle est pacifique. */
+  retaliates?: boolean;
+  /** Recul infligé à la cible. */
+  knockback?: number;
+}
+
+interface MobDef extends MobTraits {
   name: string;
   hostile: boolean;
   health: number;
@@ -63,7 +79,8 @@ const M = (
   xp: number,
   drops: MobDef['drops'],
   parts: MobPart[],
-): MobDef => ({ name, hostile, health, speed, width, height, damage, aggroRange, xp, drops, parts });
+  traits: MobTraits = {},
+): MobDef => ({ name, hostile, health, speed, width, height, damage, aggroRange, xp, drops, parts, ...traits });
 
 // Les dimensions sont exprimées en blocs (1 bloc = 1 unité).
 export const MOBS: Record<MobKind, MobDef> = {
@@ -152,6 +169,67 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'l3', size: [0.9, 0.1, 0.1], offset: [-0.5, 0.4, 0.3], color: 0x1a1a22, anim: 'legBL' },
       { name: 'l4', size: [0.9, 0.1, 0.1], offset: [0.5, 0.4, 0.3], color: 0x1a1a22, anim: 'legBR' },
     ]),
+
+  // --- Habitants des villages ---------------------------------------------
+  villager: M('Villageois', false, 20, 1.6, 0.6, 1.95, 0, 0, 3,
+    [{ key: 'emerald', min: 0, max: 2 }, { key: 'bread', min: 0, max: 1 }],
+    [
+      { name: 'head', size: [0.5, 0.5, 0.5], offset: [0, 1.62, 0], color: 0xb08769, anim: 'head' },
+      { name: 'nose', size: [0.14, 0.2, 0.14], offset: [0, 1.56, -0.3], color: 0xa07257, anim: 'head' },
+      { name: 'brow', size: [0.52, 0.1, 0.1], offset: [0, 1.8, -0.22], color: 0x3a2a1e, anim: 'head' },
+      { name: 'robe', size: [0.52, 0.78, 0.3], offset: [0, 1.0, 0], color: 0x6b4a33 },
+      { name: 'stole', size: [0.56, 0.16, 0.34], offset: [0, 1.32, 0], color: 0xc4c4bc },
+      { name: 'armL', size: [0.2, 0.6, 0.24], offset: [-0.36, 1.06, -0.06], color: 0x6b4a33, anim: 'armL' },
+      { name: 'armR', size: [0.2, 0.6, 0.24], offset: [0.36, 1.06, -0.06], color: 0x6b4a33, anim: 'armR' },
+      { name: 'legL', size: [0.22, 0.62, 0.22], offset: [-0.13, 0.31, 0], color: 0x4a3626, anim: 'legFL' },
+      { name: 'legR', size: [0.22, 0.62, 0.22], offset: [0.13, 0.31, 0], color: 0x4a3626, anim: 'legFR' },
+    ]),
+  iron_golem: M('Golem de fer', false, 100, 1.5, 1.2, 2.7, 9, 24, 0,
+    [{ key: 'iron_ingot', min: 2, max: 4 }, { key: 'poppy', min: 0, max: 2 }],
+    [
+      { name: 'head', size: [0.6, 0.6, 0.6], offset: [0, 2.36, -0.06], color: 0xcfd0cb, anim: 'head' },
+      { name: 'nose', size: [0.16, 0.5, 0.16], offset: [0, 2.28, -0.38], color: 0xbcbdb8, anim: 'head' },
+      { name: 'vine', size: [0.5, 0.16, 0.5], offset: [0, 2.06, -0.06], color: 0x4d6b33 },
+      { name: 'torso', size: [0.9, 0.9, 0.6], offset: [0, 1.55, 0], color: 0xc6c7c2 },
+      { name: 'belt', size: [0.7, 0.5, 0.5], offset: [0, 1.0, 0], color: 0xb4b5b0 },
+      { name: 'armL', size: [0.3, 1.5, 0.34], offset: [-0.66, 1.5, 0], color: 0xc6c7c2, anim: 'armL' },
+      { name: 'armR', size: [0.3, 1.5, 0.34], offset: [0.66, 1.5, 0], color: 0xc6c7c2, anim: 'armR' },
+      { name: 'legL', size: [0.36, 0.76, 0.4], offset: [-0.24, 0.38, 0], color: 0xa9aaa5, anim: 'legFL' },
+      { name: 'legR', size: [0.36, 0.76, 0.4], offset: [0.24, 0.38, 0], color: 0xa9aaa5, anim: 'legFR' },
+    ],
+    { guard: true, retaliates: true, knockback: 9 }),
+
+  // --- Créatures nouvelles --------------------------------------------------
+  /** Céphalopode des grands fonds : lent hors de l'eau, redoutable dedans. */
+  kraken: M('Kraken', true, 70, 3.4, 1.8, 1.9, 7, 26, 12,
+    [{ key: 'string', min: 1, max: 3 }, { key: 'emerald', min: 0, max: 2 }, { key: 'lapis', min: 0, max: 3 }],
+    [
+      { name: 'mantle', size: [1.1, 1.3, 1.2], offset: [0, 1.25, 0.15], color: 0x5b2f6b },
+      { name: 'crown', size: [0.8, 0.36, 0.8], offset: [0, 1.95, 0.15], color: 0x6d3a80 },
+      { name: 'head', size: [1.0, 0.7, 0.9], offset: [0, 0.85, -0.55], color: 0x6d3a80, anim: 'head' },
+      { name: 'eyeL', size: [0.24, 0.24, 0.1], offset: [-0.32, 0.98, -1.02], color: 0xf0e46a, anim: 'head' },
+      { name: 'eyeR', size: [0.24, 0.24, 0.1], offset: [0.32, 0.98, -1.02], color: 0xf0e46a, anim: 'head' },
+      { name: 't1', size: [0.2, 1.1, 0.2], offset: [-0.42, 0.3, -0.72], color: 0x7a4590, anim: 'legFL' },
+      { name: 't2', size: [0.2, 1.1, 0.2], offset: [0.42, 0.3, -0.72], color: 0x7a4590, anim: 'legFR' },
+      { name: 't3', size: [0.2, 1.0, 0.2], offset: [-0.6, 0.3, -0.2], color: 0x6b3b80, anim: 'legBL' },
+      { name: 't4', size: [0.2, 1.0, 0.2], offset: [0.6, 0.3, -0.2], color: 0x6b3b80, anim: 'legBR' },
+      { name: 't5', size: [0.18, 0.9, 0.18], offset: [-0.3, 0.3, 0.4], color: 0x5b2f6b, anim: 'legBR' },
+      { name: 't6', size: [0.18, 0.9, 0.18], offset: [0.3, 0.3, 0.4], color: 0x5b2f6b, anim: 'legBL' },
+    ],
+    { aquatic: true, knockback: 7 }),
+  /** Le « bloop » : une masse gélatineuse qui rebondit et colle aux basques. */
+  bloop: M('Bloop', true, 14, 2.6, 0.85, 0.85, 3, 18, 4,
+    [{ key: 'clay_ball', min: 1, max: 3 }, { key: 'gunpowder', min: 0, max: 1 }],
+    [
+      { name: 'body', size: [0.8, 0.62, 0.8], offset: [0, 0.32, 0], color: 0x63c86e },
+      { name: 'crest', size: [0.56, 0.2, 0.56], offset: [0, 0.72, 0], color: 0x7ee089 },
+      { name: 'eyeL', size: [0.14, 0.14, 0.08], offset: [-0.18, 0.44, -0.42], color: 0x14261a, anim: 'head' },
+      { name: 'eyeR', size: [0.14, 0.14, 0.08], offset: [0.18, 0.44, -0.42], color: 0x14261a, anim: 'head' },
+      { name: 'mouth', size: [0.3, 0.08, 0.06], offset: [0, 0.24, -0.42], color: 0x14261a, anim: 'head' },
+      { name: 'footL', size: [0.2, 0.14, 0.24], offset: [-0.22, 0.07, 0], color: 0x4fae59, anim: 'legFL' },
+      { name: 'footR', size: [0.2, 0.14, 0.24], offset: [0.22, 0.07, 0], color: 0x4fae59, anim: 'legFR' },
+    ],
+    { hops: true }),
 };
 
 export function coloredBox(w: number, h: number, d: number, color: number): BoxGeometry {
@@ -196,6 +274,13 @@ export class Mob {
   fuse = -1;
   hurtFlash = 0;
   age = 0;
+  /**
+   * Cible prioritaire d'un gardien, choisie par le jeu : un golem de fer
+   * frappe les créatures hostiles autour de lui plutôt que le joueur.
+   */
+  threat: Mob | null = null;
+  /** Phase de rebond, pour les créatures qui sautillent. */
+  private hopTimer = 0;
   private walkPhase = 0;
   private parts: { mesh: Mesh; anim: MobPart['anim']; base: Vector3 }[] = [];
   material: ShaderMaterial;
@@ -231,22 +316,27 @@ export class Mob {
     if (this.jumpCooldown > 0) this.jumpCooldown -= dt;
 
     const d = this.def;
-    const toPlayer = tmpVec.copy(playerPos).sub(this.position);
+    // Un gardien vise sa menace ; tout le monde vise le joueur.
+    const guarding = d.guard === true && this.threat !== null && !this.threat.dead;
+    const focus = guarding ? this.threat!.position : playerPos;
+    const toPlayer = tmpVec.copy(focus).sub(this.position);
     const dist = toPlayer.length();
 
     // --- Décision ---
     let wishX = 0, wishZ = 0;
-    if (d.hostile && playerReachable && dist < d.aggroRange) {
+    if (guarding) {
       this.aggro = true;
-    } else if (dist > d.aggroRange * 1.6) {
+    } else if (d.hostile && playerReachable && dist < d.aggroRange) {
+      this.aggro = true;
+    } else if (dist > d.aggroRange * 1.6 || (!d.hostile && !d.retaliates)) {
       this.aggro = false;
     }
 
     if (this.aggro && dist > 0.05) {
       this.yaw = Math.atan2(toPlayer.x, toPlayer.z);
-      const speed = this.kind === 'creeper' && this.fuse >= 0 ? 0 : 1;
-      wishX = (toPlayer.x / dist) * speed;
-      wishZ = (toPlayer.z / dist) * speed;
+      const drive = this.kind === 'creeper' && this.fuse >= 0 ? 0 : 1;
+      wishX = (toPlayer.x / dist) * drive;
+      wishZ = (toPlayer.z / dist) * drive;
 
       if (this.kind === 'creeper') {
         if (dist < 2.6) {
@@ -258,7 +348,16 @@ export class Mob {
         }
       } else if (dist < 1.4 + d.width * 0.5 && this.attackCooldown <= 0 && d.damage > 0) {
         this.attackCooldown = 1.1;
-        onDamagePlayer(d.damage);
+        if (guarding) {
+          const t = this.threat!;
+          t.hurt(d.damage);
+          const k = d.knockback ?? 4;
+          t.velocity.x += (toPlayer.x / dist) * k;
+          t.velocity.z += (toPlayer.z / dist) * k;
+          t.velocity.y += k * 0.45;
+        } else {
+          onDamagePlayer(d.damage);
+        }
       }
     } else {
       // Errance.
@@ -276,12 +375,26 @@ export class Mob {
     }
 
     // --- Physique ---
-    const speed = d.speed * (this.aggro ? 1 : 0.7);
-    this.velocity.x += (wishX * speed - this.velocity.x) * Math.min(1, 9 * dt);
-    this.velocity.z += (wishZ * speed - this.velocity.z) * Math.min(1, 9 * dt);
-
     this.inWater = isLiquid(world, this.position.x, this.position.y + 0.2, this.position.z);
-    if (this.inWater) {
+    // Une créature qui sautille n'avance qu'en l'air : au sol elle prend son élan.
+    const airborne = d.hops === true && !this.onGround && !this.inWater;
+    const grounded = d.hops === true && this.onGround && !this.inWater;
+    let speed = d.speed * (this.aggro ? 1 : 0.7);
+    if (d.hops) speed *= airborne ? 1 : 0.15;
+    if (d.aquatic && !this.inWater) speed *= 0.3; // échoué : presque immobile
+    this.velocity.x += (wishX * speed - this.velocity.x) * Math.min(1, (grounded ? 3 : 9) * dt);
+    this.velocity.z += (wishZ * speed - this.velocity.z) * Math.min(1, (grounded ? 3 : 9) * dt);
+
+    if (d.aquatic) {
+      // Nage : flottabilité neutre dans l'eau, chute lourde à l'air libre.
+      if (this.inWater) {
+        const dy = focus.y + 0.5 - this.position.y;
+        const climb = this.aggro ? clampNum(dy, -1, 1) : Math.sin(this.age * 0.6) * 0.4;
+        this.velocity.y += (climb * d.speed * 0.8 - this.velocity.y) * Math.min(1, 4 * dt);
+      } else {
+        this.velocity.y -= GRAVITY * dt;
+      }
+    } else if (this.inWater) {
       this.velocity.y += 14 * dt;
       this.velocity.y *= 0.86;
     } else {
@@ -289,10 +402,19 @@ export class Mob {
       if (this.velocity.y < -TERMINAL_VELOCITY) this.velocity.y = -TERMINAL_VELOCITY;
     }
 
+    // Rebond régulier du « bloop » : c'est sa seule façon d'avancer.
+    if (d.hops) {
+      this.hopTimer -= dt;
+      if (this.onGround && this.hopTimer <= 0) {
+        this.velocity.y = this.aggro ? 8.4 : 6.4;
+        this.hopTimer = this.aggro ? 0.55 : 1.4 + this.rnd() * 1.6;
+      }
+    }
+
     const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: d.width, height: d.height };
     const res = moveBox(world, box, this.velocity, dt, false);
     // Franchit les marches d'un bloc.
-    if ((res.hitX || res.hitZ) && res.onGround && this.jumpCooldown <= 0) {
+    if ((res.hitX || res.hitZ) && res.onGround && this.jumpCooldown <= 0 && !d.hops) {
       this.velocity.y = 7.2;
       this.jumpCooldown = 0.6;
     }
@@ -316,7 +438,17 @@ export class Mob {
   }
 
   private animate(planar: number): void {
-    const swing = Math.sin(this.walkPhase * 2.4) * Math.min(0.7, 0.18 + planar * 0.22);
+    const d = this.def;
+    // Une masse gélatineuse s'écrase à l'atterrissage et s'étire en l'air.
+    if (d.hops) {
+      const squash = this.onGround ? 1 - Math.min(0.3, Math.max(0, this.hopTimer) * 0.4) : 1 + Math.min(0.28, Math.abs(this.velocity.y) * 0.03);
+      this.group.scale.set(1 / Math.sqrt(squash), squash, 1 / Math.sqrt(squash));
+    }
+    // Les tentacules ondulent en permanence, même à l'arrêt.
+    const swing = d.aquatic
+      ? Math.sin(this.age * 3.2) * 0.45
+      : Math.sin(this.walkPhase * 2.4) * Math.min(0.7, 0.18 + planar * 0.22);
+    if (d.aquatic) this.group.rotation.x = Math.sin(this.age * 1.3) * 0.12 - (this.inWater ? 0 : 0.3);
     for (const p of this.parts) {
       switch (p.anim) {
         case 'legFL':
@@ -488,6 +620,36 @@ export function findSpawnSpot(
     }
   }
   return null;
+}
+
+/** Emplacement immergé pour une créature aquatique (kraken). */
+export function findWaterSpawnSpot(
+  world: World,
+  cx: number,
+  cz: number,
+  rnd: () => number,
+  height: number,
+): Vector3 | null {
+  for (let attempt = 0; attempt < 16; attempt++) {
+    const x = Math.floor(cx + (rnd() - 0.5) * 72);
+    const z = Math.floor(cz + (rnd() - 0.5) * 72);
+    // On descend depuis la surface jusqu'à trouver une colonne d'eau assez haute.
+    for (let y = SEA_LEVEL - 2; y > SEA_LEVEL - 26; y--) {
+      if (y < 4) break;
+      let deep = true;
+      for (let h = 0; h < Math.ceil(height) + 1; h++) {
+        if (world.getBlock(x, y + h, z) !== B.water) { deep = false; break; }
+      }
+      if (!deep) continue;
+      if (world.getBlock(x, y - 1, z) === 0) continue;
+      return new Vector3(x + 0.5, y, z + 0.5);
+    }
+  }
+  return null;
+}
+
+function clampNum(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
 }
 
 const tmpVec = new Vector3();

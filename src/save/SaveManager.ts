@@ -25,8 +25,12 @@ export interface WorldMeta {
   /** Temps de jeu cumulé en secondes. */
   playtime: number;
   dayTime: number;
-  /** Monde superplat, choisi à la création. */
+  /** Monde superplat, choisi à la création (ancien format, encore lu). */
   flat?: boolean;
+  /** Type de monde : `normal`, `flat` ou `oneblock`. */
+  type?: 'normal' | 'flat' | 'oneblock';
+  /** Mode « oneblock » : nombre de blocs cassés depuis le début. */
+  oneblock?: number;
 }
 
 export interface PlayerSave {

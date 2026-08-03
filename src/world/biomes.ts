@@ -62,8 +62,8 @@ const D: Omit<BiomeDef, 'id' | 'name'> = {
   grassDensity: 0,
   flowerDensity: 0,
   snowLine: Infinity,
-  grassTint: 0x79c05a,
-  foliageTint: 0x6cbb3c,
+  grassTint: 0x51803c,
+  foliageTint: 0x528e2e,
   waterTint: 0x3f76e4,
   fogTint: 0xc0d8ff,
   fogDensity: 1,
@@ -88,58 +88,58 @@ BIOMES[Biome.Plains] = def(Biome.Plains, 'Plaines', {
   treeDensity: 0.004, tree: 'oak', grassDensity: 0.16, flowerDensity: 0.02,
 });
 BIOMES[Biome.SunflowerPlains] = def(Biome.SunflowerPlains, 'Prairie fleurie', {
-  treeDensity: 0.003, tree: 'oak', grassDensity: 0.22, flowerDensity: 0.14, grassTint: 0x8ac95f,
+  treeDensity: 0.003, tree: 'oak', grassDensity: 0.22, flowerDensity: 0.14, grassTint: 0x5c873f,
 });
 BIOMES[Biome.Forest] = def(Biome.Forest, 'Forêt', {
   treeDensity: 0.036, tree: 'oak', secondaryTree: 'big_oak', secondaryChance: 0.12,
-  grassDensity: 0.18, flowerDensity: 0.03, grassTint: 0x69bd4a, foliageTint: 0x5fbb2f,
+  grassDensity: 0.18, flowerDensity: 0.03, grassTint: 0x467f31, foliageTint: 0x488e24,
 });
 BIOMES[Biome.BirchForest] = def(Biome.BirchForest, 'Forêt de bouleaux', {
   treeDensity: 0.032, tree: 'birch', grassDensity: 0.16, flowerDensity: 0.03,
-  grassTint: 0x88bb67, foliageTint: 0x93c771,
+  grassTint: 0x5b7d45, foliageTint: 0x709756,
 });
 BIOMES[Biome.Taiga] = def(Biome.Taiga, 'Taïga', {
   treeDensity: 0.03, tree: 'spruce', secondaryTree: 'tall_spruce', secondaryChance: 0.25,
-  grassDensity: 0.1, temperature: 0.25, grassTint: 0x6aa257, foliageTint: 0x4d7a4a, fogTint: 0xb6c7d8,
+  grassDensity: 0.1, temperature: 0.25, grassTint: 0x476c3a, foliageTint: 0x3b5d38, fogTint: 0xb6c7d8,
 });
 BIOMES[Biome.SnowyTaiga] = def(Biome.SnowyTaiga, 'Taïga enneigée', {
   treeDensity: 0.022, tree: 'spruce', grassDensity: 0.04, snowLine: 0, temperature: -0.2,
-  grassTint: 0x63a26b, foliageTint: 0x4a6f52, waterTint: 0x3a5fb0, fogTint: 0xd8e6f2,
+  grassTint: 0x426c47, foliageTint: 0x38543e, waterTint: 0x3a5fb0, fogTint: 0xd8e6f2,
 });
 BIOMES[Biome.SnowyPlains] = def(Biome.SnowyPlains, 'Plaines enneigées', {
   grassDensity: 0.02, snowLine: 0, temperature: -0.4,
-  grassTint: 0x80b497, foliageTint: 0x60a17b, waterTint: 0x3d57d6, fogTint: 0xe2eef8, fogDensity: 1.25,
+  grassTint: 0x557965, foliageTint: 0x497a5d, waterTint: 0x3d57d6, fogTint: 0xe2eef8, fogDensity: 1.25,
 });
 BIOMES[Biome.Desert] = def(Biome.Desert, 'Désert', {
   surface: B.sand, subsurface: B.sandstone, underwater: B.sand, depth: 6,
   treeDensity: 0.006, tree: 'cactus', grassDensity: 0.01, temperature: 1.4,
-  grassTint: 0xbfb755, foliageTint: 0xaea42a, fogTint: 0xf2e2b8, fogDensity: 0.7,
+  grassTint: 0x807a39, foliageTint: 0x847d20, fogTint: 0xf2e2b8, fogDensity: 0.7,
 });
 BIOMES[Biome.Savanna] = def(Biome.Savanna, 'Savane', {
   treeDensity: 0.012, tree: 'acacia', grassDensity: 0.2, flowerDensity: 0.01, temperature: 1.1,
-  grassTint: 0xbfb755, foliageTint: 0xaea42a, fogTint: 0xecdfae, fogDensity: 0.8,
+  grassTint: 0x807a39, foliageTint: 0x847d20, fogTint: 0xecdfae, fogDensity: 0.8,
 });
 BIOMES[Biome.Jungle] = def(Biome.Jungle, 'Jungle', {
   treeDensity: 0.05, tree: 'jungle', grassDensity: 0.28, flowerDensity: 0.06, temperature: 1.2,
-  grassTint: 0x59c93c, foliageTint: 0x54c72a, fogTint: 0xa9d8a1, fogDensity: 1.5,
+  grassTint: 0x3c8728, foliageTint: 0x409720, fogTint: 0xa9d8a1, fogDensity: 1.5,
 });
 BIOMES[Biome.Swamp] = def(Biome.Swamp, 'Marais', {
   treeDensity: 0.018, tree: 'swamp_oak', grassDensity: 0.18, flowerDensity: 0.02,
-  underwater: B.clay, grassTint: 0x6a7039, foliageTint: 0x6a7039, waterTint: 0x4b6d3a,
+  underwater: B.clay, grassTint: 0x474b26, foliageTint: 0x51552b, waterTint: 0x4b6d3a,
   fogTint: 0x8f9f78, fogDensity: 2.1, temperature: 0.8,
 });
 BIOMES[Biome.StonyPeaks] = def(Biome.StonyPeaks, 'Sommets rocheux', {
   surface: B.stone, subsurface: B.stone, underwater: B.gravel, depth: 2, snowLine: 96,
-  temperature: 0.1, fogTint: 0xd0dced, grassTint: 0x7fa87f, foliageTint: 0x6f9c6f,
+  temperature: 0.1, fogTint: 0xd0dced, grassTint: 0x557155, foliageTint: 0x547754,
 });
 BIOMES[Biome.Badlands] = def(Biome.Badlands, 'Mesa', {
   surface: B.red_sand, subsurface: B.red_sand, underwater: B.red_sand, depth: 5,
-  temperature: 1.5, grassTint: 0x90814d, foliageTint: 0x9e814d, fogTint: 0xe0a06a, fogDensity: 0.9,
+  temperature: 1.5, grassTint: 0x605634, foliageTint: 0x78623b, fogTint: 0xe0a06a, fogDensity: 0.9,
   grassDensity: 0.01,
 });
 BIOMES[Biome.Meadow] = def(Biome.Meadow, 'Alpage', {
   treeDensity: 0.006, tree: 'oak', grassDensity: 0.24, flowerDensity: 0.08,
-  grassTint: 0x83bb6d, foliageTint: 0x63a948, temperature: 0.35, fogTint: 0xcfe0f5,
+  grassTint: 0x587d49, foliageTint: 0x4b8037, temperature: 0.35, fogTint: 0xcfe0f5,
 });
 
 /**
