@@ -250,13 +250,22 @@ function palette(ctx: StructCtx, a: Anchor): Palette {
  * citrouilles** attenant.
  */
 function buildVillage(ctx: StructCtx, a: Anchor): void {
-  const rnd = mulberry32(a.salt ^ 0x51ed270b);
+  const rnd = villageRnd(a);
   const pal = palette(ctx, a);
   const base = a.y;
 
   clearVegetation(ctx, a.x, a.z, VILLAGE_RADIUS - 4);
 
-  // Place centrale et puits.
+  // 1) On arrête d'abord le plan des maisons, sans rien poser.
+  //
+  //    Tout ce qui nivelle une colonne — sentiers, champ, lampadaires — dégage
+  //    douze blocs au-dessus d'elle. Bâtir au fil de l'eau revenait donc à
+  //    percer les maisons déjà debout : le sentier menant à une maison la
+  //    traversait de part en part jusqu'à son centre, et le terrassement de la
+  //    suivante entamait la précédente. D'où des maisons « ouvertes ».
+  const houses = planHouses(a, rnd);
+
+  // 2) Terrassement : place, puits, sentiers, champ et lampadaires.
   for (let dz = -4; dz <= 4; dz++) {
     for (let dx = -4; dx <= 4; dx++) {
       if (dx * dx + dz * dz > 20) continue;
@@ -265,27 +274,78 @@ function buildVillage(ctx: StructCtx, a: Anchor): void {
   }
   buildWell(ctx, a.x, base, a.z, pal);
 
-  const count = 5 + Math.floor(rnd() * 4);
-  const placed: { x: number; z: number }[] = [];
-  for (let i = 0; i < count; i++) {
-    const ang = (i / count) * Math.PI * 2 + rnd() * 0.5;
-    const dist = 11 + rnd() * 11;
-    const hx = a.x + Math.round(Math.cos(ang) * dist);
-    const hz = a.z + Math.round(Math.sin(ang) * dist);
-    if (placed.some((p) => Math.abs(p.x - hx) < 8 && Math.abs(p.z - hz) < 8)) continue;
-    placed.push({ x: hx, z: hz });
-    const w = 5 + (rnd() < 0.4 ? 2 : 0);
-    const d = 5 + (rnd() < 0.4 ? 2 : 0);
-    buildHouse(ctx, hx, base, hz, w, d, pal, rnd, a.salt + i);
-    pathTo(ctx, a.x, a.z, hx, hz, base, pal.path);
-    if (rnd() < 0.45) lampPost(ctx, hx + (rnd() < 0.5 ? -1 : 1) * (w + 1), base, hz, pal);
+  for (const h of houses) {
+    pathTo(ctx, a.x, a.z, h, base, pal.path);
+    if (rnd() < 0.45) {
+      const lx = h.x + (rnd() < 0.5 ? -1 : 1) * (h.w + 1);
+      if (!insideAny(houses, lx, h.z)) lampPost(ctx, lx, base, h.z, pal);
+    }
   }
 
   // Champ de citrouilles : la parcelle du village, toujours du même côté que
   // l'entrée principale pour rester lisible depuis la place.
   const fx = a.x + (a.salt & 1 ? 1 : -1) * 14;
   const fz = a.z + (a.salt & 2 ? 1 : -1) * 12;
-  buildPumpkinFarm(ctx, fx, base, fz, rnd);
+  buildPumpkinFarm(ctx, fx, base, fz, rnd, houses);
+
+  // 3) Les maisons en dernier : plus rien ne viendra les entamer.
+  for (const h of houses) buildHouse(ctx, h.x, base, h.z, h.w, h.d, pal, rnd, h.salt);
+}
+
+/**
+ * Choisit les emplacements des maisons, en couronne autour de la place, sans
+ * rien poser. Exporté pour que les tests puissent vérifier l'étanchéité des
+ * bâtiments sans rejouer toute la construction.
+ */
+export function planHouses(a: Anchor, rnd: () => number): House[] {
+  const count = 5 + Math.floor(rnd() * 4);
+  const houses: House[] = [];
+  for (let i = 0; i < count; i++) {
+    const ang = (i / count) * Math.PI * 2 + rnd() * 0.5;
+    const dist = 12 + rnd() * 10;
+    const x = a.x + Math.round(Math.cos(ang) * dist);
+    const z = a.z + Math.round(Math.sin(ang) * dist);
+    const w = 5 + (rnd() < 0.4 ? 2 : 0);
+    const d = 5 + (rnd() < 0.4 ? 2 : 0);
+    const h: House = { x, z, hw: w >> 1, hd: d >> 1, w, d, salt: a.salt + i };
+    // Emprises disjointes, avec de la marge : deux avant-toits qui se
+    // recouvrent, c'est un mur en moins.
+    if (houses.some((o) => overlaps(o, h))) continue;
+    houses.push(h);
+  }
+  return houses;
+}
+
+/** Hauteur des murs d'une maison, du plancher à l'avant-toit. */
+export const HOUSE_HEIGHT = 4;
+
+/** Graine du tirage d'un village, partagée avec les tests. */
+export function villageRnd(a: Anchor): () => number {
+  return mulberry32(a.salt ^ 0x51ed270b);
+}
+
+/** Une maison planifiée : centre, demi-dimensions et graine propre. */
+export interface House {
+  x: number;
+  z: number;
+  hw: number;
+  hd: number;
+  w: number;
+  d: number;
+  salt: number;
+}
+
+/** Emprise d'une maison, avant-toit compris, élargie d'un bloc de marge. */
+function overlaps(a: House, b: House): boolean {
+  return (
+    Math.abs(a.x - b.x) <= a.hw + b.hw + 3 &&
+    Math.abs(a.z - b.z) <= a.hd + b.hd + 3
+  );
+}
+
+/** La colonne tombe-t-elle sur l'emprise d'une maison ? */
+function insideAny(houses: House[], x: number, z: number): boolean {
+  return houses.some((h) => Math.abs(h.x - x) <= h.hw + 1 && Math.abs(h.z - z) <= h.hd + 1);
 }
 
 /**
@@ -360,7 +420,7 @@ function buildHouse(
 ): void {
   const hw = w >> 1;
   const hd = d >> 1;
-  const height = 4;
+  const height = HOUSE_HEIGHT;
 
   // Terrassement : le sol de la maison est plat, les fondations comblent la pente.
   for (let dz = -hd - 1; dz <= hd + 1; dz++) {
@@ -426,13 +486,17 @@ function buildHouse(
   if (rnd() < 0.3) ctx.set(cx + (hw - 1), y + 1, cz - (hd - 1), B.bookshelf, true);
 }
 
-/** Sentier de gravier reliant deux points, en escalier sur le relief. */
-function pathTo(ctx: StructCtx, x0: number, z0: number, x1: number, z1: number, y: number, mat: number): void {
-  const steps = Math.max(Math.abs(x1 - x0), Math.abs(z1 - z0));
+/**
+ * Sentier de gravier de la place à une maison, en escalier sur le relief. Il
+ * s'arrête au pas de la porte : mené jusqu'au centre, il perçait la maison.
+ */
+function pathTo(ctx: StructCtx, x0: number, z0: number, h: House, y: number, mat: number): void {
+  const steps = Math.max(Math.abs(h.x - x0), Math.abs(h.z - z0));
   for (let i = 0; i <= steps; i++) {
     const t = i / steps;
-    const x = Math.round(x0 + (x1 - x0) * t);
-    const z = Math.round(z0 + (z1 - z0) * t);
+    const x = Math.round(x0 + (h.x - x0) * t);
+    const z = Math.round(z0 + (h.z - z0) * t);
+    if (Math.abs(x - h.x) <= h.hw + 1 && Math.abs(z - h.z) <= h.hd + 1) break;
     column(ctx, x, z, y, mat);
     column(ctx, x + 1, z, y, mat);
   }
@@ -448,11 +512,13 @@ function lampPost(ctx: StructCtx, x: number, y: number, z: number, pal: Palette)
  * Champ de citrouilles clôturé : terre labourée, rangées de citrouilles et
  * quelques pieds de blé. C'est le repère du village vu de loin.
  */
-function buildPumpkinFarm(ctx: StructCtx, cx: number, y: number, cz: number, rnd: () => number): void {
+function buildPumpkinFarm(ctx: StructCtx, cx: number, y: number, cz: number, rnd: () => number, houses: House[]): void {
   const w = 4, d = 5;
   for (let dz = -d; dz <= d; dz++) {
     for (let dx = -w; dx <= w; dx++) {
       const x = cx + dx, z = cz + dz;
+      // Une parcelle qui mord sur une maison lui creuserait le mur.
+      if (insideAny(houses, x, z)) continue;
       const border = Math.abs(dx) === w || Math.abs(dz) === d;
       column(ctx, x, z, y, border ? B.coarse_dirt : B.dirt);
       if (border) {
