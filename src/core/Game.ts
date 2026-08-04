@@ -1352,15 +1352,21 @@ export class Game {
     (e.uZenith.value as Color).setHex(nether ? 0x1c0806 : 0x05040c);
     (e.uHorizon.value as Color).setHex(nether ? 0x50130e : 0x120c22);
     (e.uSkyLight.value as Color).setHex(nether ? 0x53231a : 0x2a2438);
-    (e.uAmbient.value as Color).setHex(nether ? 0x4a2018 : 0x1e1a30);
+    // Sans ciel, la lumière ambiante est le seul éclairage de fond : c'est elle
+    // qui décide si la dimension est jouable ou noire. Les valeurs sont données
+    // en sRGB et linéarisées par `setHex`, d'où des teintes qui paraissent
+    // claires sur le papier.
+    (e.uAmbient.value as Color).setHex(nether ? 0xc07a60 : 0x453e63);
     e.uDayFactor.value = 1;
     e.uStarStrength.value = nether ? 0 : 1;
     e.uRain.value = 0;
-    (e.uFogColor.value as Color).setHex(nether ? 0x30100c : 0x0a0812);
+    (e.uFogColor.value as Color).setHex(nether ? 0x5c241c : 0x0a0812);
     (e.uFogSky.value as Color).setHex(nether ? 0x50130e : 0x120c22);
     // Brume beaucoup plus dense dans le Nether : l'horizon doit se fermer.
     const far = this.settings.renderDistance * CHUNK_X;
-    e.uFogDensity.value = (1.35 / Math.max(48, far)) * (nether ? 2.4 : 1.1);
+    // Une brume trop dense refermait l'horizon du Nether à une dizaine de
+    // blocs : on n'y voyait plus la forteresse qu'on longeait.
+    e.uFogDensity.value = (1.35 / Math.max(48, far)) * (nether ? 1.35 : 1.1);
     void st;
   }
 

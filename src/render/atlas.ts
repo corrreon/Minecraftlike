@@ -948,6 +948,24 @@ function surfaceOf(name: string): { relief: number; roughness: number } {
   return { relief: 1, roughness: 0.88 };
 }
 
+/**
+ * Recopie une tuile en inversant l'ordre des lignes.
+ *
+ * @param comps nombre de composantes par texel (4 pour du RGBA, 1 pour une
+ *              hauteur).
+ */
+function flipRows<T extends { set(a: ArrayLike<number>, o?: number): void }>(
+  src: Uint8Array | Float32Array,
+  comps: number,
+  dst: T,
+  offset: number,
+): void {
+  const row = TILE * comps;
+  for (let y = 0; y < TILE; y++) {
+    dst.set(src.subarray((TILE - 1 - y) * row, (TILE - y) * row) as never, offset + y * row);
+  }
+}
+
 /** Sobel bouclant sur le champ de hauteur → normale tangente encodée. */
 function buildNormal(height: Float32Array, relief: number, roughness: number, out: Uint8Array, offset: number): void {
   const at = (x: number, y: number) => height[(((y % TILE) + TILE) % TILE) * TILE + (((x % TILE) + TILE) % TILE)];
@@ -1002,8 +1020,16 @@ export function buildAtlas(): Atlas {
     t.finalizeHeight();
 
     const { relief, roughness } = surfaceOf(name);
-    data.set(t.data, i * STRIDE);
-    buildNormal(t.height, relief, roughness, normals, i * STRIDE);
+    // Les peintres dessinent comme sur un canevas — la ligne 0 est le haut de
+    // la tuile. L'échantillonnage, lui, met v = 0 en bas de la face : sans ce
+    // retournement, tout ce qui a un haut et un bas sort à l'envers (flamme des
+    // torches sous le manche, frange d'herbe sous la terre, fleurs à l'envers).
+    flipRows(t.data, 4, data, i * STRIDE);
+    const height = new Float32Array(TILE * TILE);
+    flipRows(t.height, 1, height, 0);
+    buildNormal(height, relief, roughness, normals, i * STRIDE);
+    // La prévisualisation garde l'orientation du peintre : les icônes de
+    // l'interface sont dessinées sur un canevas, ligne 0 en haut.
     previews.push(t.data);
   }
 

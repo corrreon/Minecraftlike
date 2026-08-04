@@ -32,6 +32,8 @@ export interface StructCtx {
   biomeAt(x: number, z: number, height?: number): Biome;
   /** Pose un bloc ; `force` écrase ce qui s'y trouve déjà. */
   set(x: number, y: number, z: number, id: number, force?: boolean): void;
+  /** Lit un bloc, ou -1 s'il est hors du chunk courant. */
+  get(x: number, y: number, z: number): number;
   /** Signale un coffre de butin (le contenu est tiré par le thread principal). */
   chest(x: number, y: number, z: number, kind: LootKind): void;
 }
@@ -231,15 +233,15 @@ interface Palette {
 function palette(ctx: StructCtx, a: Anchor): Palette {
   const b = ctx.biomeAt(a.x, a.z, a.y);
   if (b === Biome.Desert) {
-    return { wall: B.sandstone, wood: B.sandstone, log: B.sandstone, roof: B.sandstone_slab, floor: B.sandstone, path: B.sand };
+    return { wall: B.sandstone, wood: B.sandstone, log: B.sandstone, roof: B.stone_bricks, floor: B.sandstone, path: B.sand };
   }
   if (b === Biome.Taiga || b === Biome.SnowyTaiga) {
-    return { wall: B.spruce_planks, wood: B.spruce_planks, log: B.spruce_log, roof: B.spruce_slab, floor: B.cobblestone, path: B.gravel };
+    return { wall: B.spruce_planks, wood: B.spruce_planks, log: B.spruce_log, roof: B.stone_bricks, floor: B.cobblestone, path: B.gravel };
   }
   if (b === Biome.BirchForest) {
-    return { wall: B.birch_planks, wood: B.birch_planks, log: B.birch_log, roof: B.oak_slab, floor: B.cobblestone, path: B.gravel };
+    return { wall: B.birch_planks, wood: B.birch_planks, log: B.birch_log, roof: B.bricks, floor: B.cobblestone, path: B.gravel };
   }
-  return { wall: B.oak_planks, wood: B.oak_planks, log: B.oak_log, roof: B.oak_slab, floor: B.cobblestone, path: B.gravel };
+  return { wall: B.oak_planks, wood: B.oak_planks, log: B.oak_log, roof: B.bricks, floor: B.cobblestone, path: B.gravel };
 }
 
 /**
@@ -251,6 +253,8 @@ function buildVillage(ctx: StructCtx, a: Anchor): void {
   const rnd = mulberry32(a.salt ^ 0x51ed270b);
   const pal = palette(ctx, a);
   const base = a.y;
+
+  clearVegetation(ctx, a.x, a.z, VILLAGE_RADIUS - 4);
 
   // Place centrale et puits.
   for (let dz = -4; dz <= 4; dz++) {
@@ -282,6 +286,29 @@ function buildVillage(ctx: StructCtx, a: Anchor): void {
   const fx = a.x + (a.salt & 1 ? 1 : -1) * 14;
   const fz = a.z + (a.salt & 2 ? 1 : -1) * 12;
   buildPumpkinFarm(ctx, fx, base, fz, rnd);
+}
+
+/**
+ * Abat ce qui pousse dans l'emprise d'un village : troncs, feuillages, hautes
+ * herbes. Un village de taïga naissait sinon au milieu des sapins, troncs au
+ * travers des murs et bouquets de feuilles suspendus au-dessus des toits une
+ * fois les colonnes nivelées.
+ *
+ * On lit avant d'écrire : hors du chunk courant `get` renvoie -1, et c'est au
+ * chunk voisin de traiter ses propres colonnes.
+ */
+function clearVegetation(ctx: StructCtx, cx: number, cz: number, radius: number): void {
+  for (let dz = -radius; dz <= radius; dz++) {
+    for (let dx = -radius; dx <= radius; dx++) {
+      if (dx * dx + dz * dz > radius * radius) continue;
+      const x = cx + dx;
+      const z = cz + dz;
+      const g = ctx.heightAt(x, z);
+      for (let y = g + 1; y <= g + 26 && y < WORLD_HEIGHT; y++) {
+        if (ctx.get(x, y, z) > 0) ctx.set(x, y, z, 0, true);
+      }
+    }
+  }
 }
 
 /**
@@ -369,20 +396,22 @@ function buildHouse(
     }
   }
 
-  // Toiture : deux pans qui se rejoignent sur le faîte.
-  const span = Math.max(hw, hd) + 1;
-  for (let step = 0; step <= span; step++) {
-    const yy = y + height + 1 + step;
-    for (let dz = -hd - 1 + step; dz <= hd + 1 - step; dz++) {
-      for (let dx = -hw - 1 + step; dx <= hw + 1 - step; dx++) {
-        const border =
-          dx === -hw - 1 + step || dx === hw + 1 - step ||
-          dz === -hd - 1 + step || dz === hd + 1 - step;
-        if (!border && step < span) continue;
-        ctx.set(cx + dx, yy, cz + dz, step === span ? pal.wood : pal.roof, true);
-      }
+  // Plafond plein, débordant d'un bloc. C'est lui qui ferme la maison : la
+  // version en anneaux laissait un jour continu tout autour du bâtiment, entre
+  // le haut des murs et l'avant-toit posé un cran plus haut et plus large.
+  const eave = y + height + 1;
+  for (let dz = -hd - 1; dz <= hd + 1; dz++) {
+    for (let dx = -hw - 1; dx <= hw + 1; dx++) ctx.set(cx + dx, eave, cz + dz, pal.wood, true);
+  }
+
+  // Toiture en gradins pleins, refermée d'elle-même au faîte.
+  for (let step = 1; ; step++) {
+    const rx = hw + 1 - step;
+    const rz = hd + 1 - step;
+    if (rx < 0 || rz < 0) break;
+    for (let dz = -rz; dz <= rz; dz++) {
+      for (let dx = -rx; dx <= rx; dx++) ctx.set(cx + dx, eave + step, cz + dz, pal.roof, true);
     }
-    if (2 * step >= Math.min(w, d)) break;
   }
 
   // Mobilier contre un mur.
@@ -391,7 +420,9 @@ function buildHouse(
   ctx.set(ix, y + 1, iz, B.chest, true);
   ctx.chest(ix, y + 1, iz, 'village');
   ctx.set(cx - (hw - 1), y + 1, cz + (hd - 1), rnd() < 0.5 ? B.crafting_table : B.furnace, true);
-  ctx.set(cx, y + height, cz, B.torch, true);
+  // Torche posée au sol dans un angle : faute de torche murale, une torche
+  // suspendue au milieu du plafond avait l'air d'un oubli.
+  ctx.set(cx - (hw - 1), y + 1, cz - (hd - 1), B.torch, true);
   if (rnd() < 0.3) ctx.set(cx + (hw - 1), y + 1, cz - (hd - 1), B.bookshelf, true);
 }
 

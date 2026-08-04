@@ -100,7 +100,7 @@ export const MOBS: Record<MobKind, MobDef> = {
     [{ key: 'porkchop', min: 1, max: 3 }],
     [
       { name: 'body', size: [0.62, 0.5, 1.0], offset: [0, 0.62, 0], color: 0xe8a0a0 },
-      { name: 'head', size: [0.5, 0.5, 0.44], offset: [0, 0.72, -0.66], color: 0xe8a0a0, anim: 'head' },
+      { name: 'head', size: [0.5, 0.5, 0.44], offset: [0, 0.72, -0.66], color: 0xdd8f92, anim: 'head' },
       { name: 'snout', size: [0.24, 0.16, 0.1], offset: [0, 0.66, -0.92], color: 0xd88a8a, anim: 'head' },
       { name: 'l1', size: [0.22, 0.38, 0.22], offset: [-0.18, 0.19, -0.3], color: 0xd08a8a, anim: 'legFL' },
       { name: 'l2', size: [0.22, 0.38, 0.22], offset: [0.18, 0.19, -0.3], color: 0xd08a8a, anim: 'legFR' },
@@ -123,7 +123,7 @@ export const MOBS: Record<MobKind, MobDef> = {
     [{ key: 'mutton', min: 1, max: 2 }, { key: 'white_wool', min: 1, max: 1 }],
     [
       { name: 'body', size: [0.78, 0.68, 1.1], offset: [0, 0.9, 0], color: 0xf0efe8 },
-      { name: 'head', size: [0.42, 0.42, 0.46], offset: [0, 1.06, -0.72], color: 0xe8e2d4, anim: 'head' },
+      { name: 'head', size: [0.44, 0.44, 0.46], offset: [0, 1.06, -0.72], color: 0xcbb9a4, anim: 'head' },
       { name: 'l1', size: [0.2, 0.56, 0.2], offset: [-0.22, 0.28, -0.3], color: 0xdad4c4, anim: 'legFL' },
       { name: 'l2', size: [0.2, 0.56, 0.2], offset: [0.22, 0.28, -0.3], color: 0xdad4c4, anim: 'legFR' },
       { name: 'l3', size: [0.2, 0.56, 0.2], offset: [-0.22, 0.28, 0.34], color: 0xdad4c4, anim: 'legBL' },
@@ -583,7 +583,11 @@ export class Mob {
     const planar = Math.hypot(this.velocity.x, this.velocity.z);
     this.walkPhase += dt * (2.5 + planar * 2.6);
     this.group.position.copy(this.position);
-    this.group.rotation.y = this.yaw;
+    // Les modèles regardent vers -Z, alors que `yaw` suit la convention
+    // `atan2(dx, dz)` du reste du jeu. Sans ce demi-tour, toutes les créatures
+    // avançaient à reculons et ne montraient jamais que leur arrière-train —
+    // le modèle du joueur applique déjà la même correction.
+    this.group.rotation.y = this.yaw + Math.PI;
     this.animate(planar);
 
     const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));

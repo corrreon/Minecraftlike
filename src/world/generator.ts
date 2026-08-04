@@ -511,6 +511,15 @@ export class TerrainGenerator {
         const i = voxelIndex(lx, y, lz);
         if (force || blocks[i] === 0) blocks[i] = id;
       },
+      // -1 hors du chunk : le bâtisseur saute la colonne plutôt que de
+      // supposer qu'elle est vide.
+      get: (x, y, z) => {
+        if (y < 0 || y >= WORLD_HEIGHT) return -1;
+        const lx = x - ox;
+        const lz = z - oz;
+        if (lx < 0 || lx >= CHUNK_X || lz < 0 || lz >= CHUNK_Z) return -1;
+        return blocks[voxelIndex(lx, y, lz)];
+      },
       chest: (x, y, z, k) => onChest?.(x, y, z, k),
     };
   }
@@ -545,6 +554,7 @@ export class TerrainGenerator {
       heightAt: (ax, az) => this.heightAt(ax, az),
       biomeAt: (ax, az, h) => this.biomeAt(ax, az, h),
       set: () => {},
+      get: () => -1,
       chest: (cxw, cyw, czw, k) => {
         if (cxw === x && cyw === y && czw === z) found = k;
       },
@@ -560,6 +570,7 @@ export class TerrainGenerator {
       heightAt: (ax, az) => this.heightAt(ax, az),
       biomeAt: (ax, az, h) => this.biomeAt(ax, az, h),
       set: () => {},
+      get: () => -1,
       chest: () => {},
     };
     return villagesNear(ctx, x, z, radius);
