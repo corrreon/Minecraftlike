@@ -160,6 +160,11 @@ export class Game {
   // Interaction.
   private breakProgress = 0;
   private breakKey = '';
+  /**
+   * Vrai depuis la destruction d'un bloc jusqu'au relâchement du bouton. C'est
+   * ce qui garantit « un bloc par appui » : maintenir enfoncé ne creuse pas.
+   */
+  private mineLocked = false;
   private placeCooldown = 0;
   private attackCooldown = 0;
   private outline: LineSegments;
@@ -1425,6 +1430,13 @@ export class Game {
         this.hitMob(mob);
         this.heldView.swing = 1;
         this.breakProgress = 0;
+      } else if (this.mineLocked) {
+        // Un bloc par appui : tant que le bouton n'est pas relâché, on ne
+        // creuse plus. Sans ce verrou, le mode créatif cassait un bloc par
+        // image et un simple appui ouvrait une tranchée.
+        this.breakProgress = 0;
+        this.breakKey = '';
+        this.breakOverlay.visible = false;
       } else if (hit) {
         this.mineBlock(hit, dt);
       } else {
@@ -1433,6 +1445,7 @@ export class Game {
         if (this.attackCooldown <= 0) { this.attackCooldown = 0.28; this.heldView.swing = 1; }
       }
     } else {
+      this.mineLocked = false;
       this.breakProgress = 0;
       this.breakKey = '';
       this.breakOverlay.visible = false;
@@ -1495,6 +1508,7 @@ export class Game {
     if (this.player.mode === GameMode.Creative) {
       this.destroyBlock(hit, true);
       this.breakProgress = 0;
+      this.mineLocked = true;
       this.heldView.swing = 1;
       return;
     }
@@ -1515,6 +1529,7 @@ export class Game {
     if (this.breakProgress >= 1) {
       this.destroyBlock(hit, info.harvest);
       this.breakProgress = 0;
+      this.mineLocked = true;
       this.breakOverlay.visible = false;
     }
   }
