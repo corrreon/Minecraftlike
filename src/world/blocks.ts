@@ -83,6 +83,11 @@ export interface BlockDef {
    * que `minY`/`maxY` décrivent déjà.
    */
   boxes?: Box[];
+  /**
+   * Quarts de tour appliqués à la texture de la face du dessus. Sert aux blocs
+   * dont le motif a un sens — l'oreiller d'un lit pointe vers la tête.
+   */
+  rotTop: number;
 }
 
 /** Boîte élémentaire d'une forme, en fraction de voxel. */
@@ -128,6 +133,7 @@ interface BlockOptions {
   minY?: number;
   maxY?: number;
   boxes?: Box[];
+  rotTop?: number;
 }
 
 function define(key: string, o: BlockOptions): BlockDef {
@@ -168,6 +174,7 @@ function define(key: string, o: BlockOptions): BlockDef {
     minY: o.minY ?? 0,
     maxY: o.maxY ?? 1,
     boxes: o.boxes,
+    rotTop: o.rotTop ?? 0,
     textures: t,
     layers: { top: tex(t.top), bottom: tex(t.bottom), side: tex(t.side) },
   };
@@ -681,6 +688,115 @@ define('end_portal', {
   solid: false, opaque: false, lightFilter: 0, emission: 15, hardness: -1, sound: 'glass',
 });
 
+// ---------------------------------------------------------------------------
+// Menuiserie : porte, portillon, lit
+// ---------------------------------------------------------------------------
+
+/**
+ * Les trois familles partagent la même convention d'orientation que les
+ * escaliers : `facing` désigne la direction vers laquelle le bloc « regarde ».
+ *
+ * - une porte est un panneau mince plaqué contre le bord `facing` du voxel ;
+ *   ouverte, le panneau pivote d'un quart de tour et se plaque sur le côté ;
+ * - un portillon fermé barre le passage à mi-hauteur ; ouvert, il ne reste que
+ *   les deux montants, et on passe ;
+ * - un lit occupe le bas du voxel, la tête portant l'oreiller.
+ */
+export const FACINGS = ['north', 'south', 'west', 'east'] as const;
+export type Facing = (typeof FACINGS)[number];
+
+/** Quart de tour à appliquer à la texture du dessus, par orientation. */
+const FACING_ROT: Record<Facing, number> = { north: 0, south: 2, west: 3, east: 1 };
+
+const T = 3 / 16; // épaisseur d'un panneau de porte
+
+/** Panneau plaqué contre le bord `facing`. */
+const PANEL: Record<Facing, Box> = {
+  north: [0, 0, 0, 1, 1, T],
+  south: [0, 0, 1 - T, 1, 1, 1],
+  west: [0, 0, 0, T, 1, 1],
+  east: [1 - T, 0, 0, 1, 1, 1],
+};
+/** Quart de tour dans le sens horaire : la porte ouverte se plaque sur ce côté. */
+const OPEN_OF: Record<Facing, Facing> = { north: 'east', east: 'south', south: 'west', west: 'north' };
+
+for (const facing of FACINGS) {
+  for (const [half, texture, label] of [['lower', 'door_lower', 'bas'], ['upper', 'door_upper', 'haut']] as const) {
+    for (const [state, box] of [['closed', PANEL[facing]], ['open', PANEL[OPEN_OF[facing]]]] as const) {
+      define(`oak_door_${facing}_${half}_${state}`, {
+        name: `Porte de chêne (${label})`,
+        textures: texture,
+        layer: RenderLayer.Cutout,
+        opaque: false,
+        lightFilter: 0,
+        hardness: 3,
+        tool: 'axe',
+        sound: 'wood',
+        flammable: true,
+        // Une seule clé d'objet pour les seize variantes, et seule la moitié
+        // basse la rend : sinon casser une porte donnerait deux portes.
+        drop: half === 'lower' ? 'oak_door' : 'air',
+        boxes: [box],
+      });
+    }
+  }
+}
+
+/** Montants du portillon ouvert : le passage est libre entre les deux. */
+const GATE_POSTS: Record<Facing, [Box, Box]> = {
+  north: [[0, 0.3, 0, 2 / 16, 1, T], [14 / 16, 0.3, 0, 1, 1, T]],
+  south: [[0, 0.3, 1 - T, 2 / 16, 1, 1], [14 / 16, 0.3, 1 - T, 1, 1, 1]],
+  west: [[0, 0.3, 0, T, 1, 2 / 16], [0, 0.3, 14 / 16, T, 1, 1]],
+  east: [[1 - T, 0.3, 0, 1, 1, 2 / 16], [1 - T, 0.3, 14 / 16, 1, 1, 1]],
+};
+/** Battant fermé : une barrière pleine à mi-hauteur, en travers du passage. */
+const GATE_LEAF: Record<Facing, Box> = {
+  north: [0, 0.3, 0, 1, 1, T],
+  south: [0, 0.3, 1 - T, 1, 1, 1],
+  west: [0, 0.3, 0, T, 1, 1],
+  east: [1 - T, 0.3, 0, 1, 1, 1],
+};
+
+for (const facing of FACINGS) {
+  for (const state of ['closed', 'open'] as const) {
+    define(`oak_fence_gate_${facing}_${state}`, {
+      name: 'Portillon de chêne',
+      textures: 'oak_planks',
+      opaque: false,
+      lightFilter: 0,
+      // Ouvert, le portillon ne barre plus rien : les montants sont décoratifs.
+      solid: state === 'closed',
+      hardness: 2,
+      tool: 'axe',
+      sound: 'wood',
+      flammable: true,
+      drop: 'oak_fence_gate',
+      boxes: state === 'closed' ? [GATE_LEAF[facing]] : GATE_POSTS[facing],
+    });
+  }
+}
+
+for (const facing of FACINGS) {
+  for (const [half, top, label] of [['foot', 'bed_foot', 'pied'], ['head', 'bed_head', 'tête']] as const) {
+    define(`red_bed_${facing}_${half}`, {
+      name: `Lit rouge (${label})`,
+      textures: { top, bottom: 'oak_planks', side: 'bed_side' },
+      opaque: false,
+      lightFilter: 15,
+      hardness: 0.4,
+      sound: 'wool',
+      flammable: true,
+      // Comme la porte : une seule des deux moitiés rend l'objet.
+      drop: half === 'foot' ? 'red_bed' : 'air',
+      // La tête d'un lit orienté « north » a son oreiller au nord : la texture
+      // du dessus tourne avec l'orientation.
+      rotTop: FACING_ROT[facing],
+      minY: 0,
+      maxY: 0.5625,
+    });
+  }
+}
+
 export const AIR = 0;
 export const BLOCK_COUNT = BLOCKS.length;
 
@@ -706,6 +822,8 @@ export const MAX_BOXES = 2;
 export const SHAPE_BOXES = new Float32Array(BLOCK_COUNT * MAX_BOXES * 6);
 /** [top, bottom, side] aplatis par identifiant de bloc. */
 export const TEX_LAYERS = new Uint16Array(BLOCK_COUNT * 3);
+/** Quarts de tour de la texture du dessus, 0..3. */
+export const ROT_TOP = new Uint8Array(BLOCK_COUNT);
 
 for (const b of BLOCKS) {
   IS_OPAQUE[b.id] = b.opaque ? 1 : 0;
@@ -728,6 +846,7 @@ for (const b of BLOCKS) {
   TEX_LAYERS[b.id * 3 + 0] = b.layers.top;
   TEX_LAYERS[b.id * 3 + 1] = b.layers.bottom;
   TEX_LAYERS[b.id * 3 + 2] = b.layers.side;
+  ROT_TOP[b.id] = b.rotTop;
 }
 
 export const TEXTURE_NAMES: readonly string[] = TEXTURE_ORDER;

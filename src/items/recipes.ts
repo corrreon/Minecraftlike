@@ -183,6 +183,16 @@ const DYES: [string, string][] = [
 ];
 for (const [dye, out] of DYES) RECIPES.push(shapeless([dye, WOOL], out));
 
+// --- Menuiserie ------------------------------------------------------------
+RECIPES.push(shaped(['PP', 'PP', 'PP'], { P: PLANKS }, 'oak_door', 3));
+RECIPES.push(shaped(['SPS', 'SPS'], { S: 'stick', P: PLANKS }, 'oak_fence_gate'));
+// Trois laines et trois planches : la couleur de la laine n'entre pas en compte,
+// le lit est rouge quoi qu'il arrive.
+RECIPES.push(shaped(['WWW', 'PPP'], { W: WOOL, P: PLANKS }, 'red_bed'));
+
+// --- Seaux -----------------------------------------------------------------
+RECIPES.push(shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket'));
+
 // --- Nether, End et netherite ----------------------------------------------
 // Le briquet allume un cadre d'obsidienne : c'est la clé du Nether.
 RECIPES.push(shaped(['I ', ' F'], { I: 'iron_ingot', F: 'flint' }, 'flint_and_steel'));

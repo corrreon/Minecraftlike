@@ -45,12 +45,15 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   et **coffres au trésor** enfouis sous les plages. Chaque chunk reconstruit
   intégralement la structure qui le touche et découpe ce qui dépasse : aucune
   couture quand on arrive par le bord.
-- **~210 blocs** : roches et variantes polies, minerais, quatre essences de
+- **~240 blocs** : roches et variantes polies, minerais, quatre essences de
   bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
   lumière, matériaux du Nether et de l'End, et une palette de construction
   complète — laine, **béton**, **terre cuite** et **verre teinté** dans les
   16 teintes, plus **10 familles de dalles** et **6 familles d'escaliers**
   orientés selon le regard à la pose.
+- **Menuiserie** : **porte** sur deux blocs qui s'ouvre et se ferme d'un bloc,
+  **portillon** qu'on franchit une fois ouvert, et **lit** qui passe la nuit et
+  fixe le point de réapparition. Tous trois s'orientent selon le regard.
 - **Trois types de monde** au choix à la création : normal, **superplat** pour
   bâtir sans terrain qui gêne, et **oneblock**.
 
@@ -127,12 +130,18 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   spectateur.
 - **Minage** dépendant du bloc et de l'outil : durée, niveau requis, butin
   conditionnel, usure des outils, particules et sons par matériau.
+- **Récupération des matériaux** : chaque bloc cassé laisse son butin au sol,
+  attiré puis ramassé quand on s'approche. Les piles identiques proches
+  **fusionnent** — une veine entière ou un arbre abattu ne saturent donc plus la
+  liste d'objets, où le butin le plus ancien finissait par disparaître avant
+  d'être vu — et un objet oublié s'efface au bout de cinq minutes.
 - **Inventaire complet** : 36 emplacements + barre rapide, 4 emplacements
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **165 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  **170 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
   de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
+  porte, portillon, lit, seau,
   TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
@@ -142,7 +151,11 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   après un rechargement du monde.
 - **Four** fonctionnel : combustion, progression de cuisson, table de fusion
   (minerais, verre, briques, cuisson des viandes) ; **coffres** de 27 cases.
-- **Créatures** : cochon, vache, mouton, poule, zombie, squelette, creeper,
+- **Seaux** : le seau se remplit d'eau ou de lave et se vide où l'on vise.
+  L'eau versée sur la lave la **fige en obsidienne**, ce qui rend le portail du
+  Nether constructible sans dépendre d'un coffre de structure — il ne reste
+  qu'à l'allumer au briquet.
+- **Créatures** : cochon, vache, mouton, poule, **cheval**, zombie, squelette, creeper,
   araignée, **villageois**, **idiot du village**, **golem de fer**, **kraken**,
   **bloop**, **braise**, **enderman** et le **dragon de l'End** — modèles
   articulés animés (ailes battantes et queue ondulante pour le dragon), IA
@@ -151,7 +164,9 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   terrain, le golem prend pour cible la créature hostile la plus proche et
   riposte si on le frappe, le kraken nage et s'échoue hors de l'eau, le bloop
   n'avance que par bonds, la braise ne se pose jamais et l'enderman se dérobe
-  d'un pas de côté dès qu'on le touche.
+  d'un pas de côté dès qu'on le touche. Le **cheval se monte** d'un clic droit :
+  il obéit alors au clavier comme à la manette tactile, court plus vite qu'un
+  sprint, saute sur commande, et on en descend en s'accroupissant.
 - **Survie** : vie, faim et saturation, souffle sous l'eau, dégâts de chute, de
   lave, de cactus et de famine, régénération, armure et réduction de dégâts,
   écran de mort et réapparition.
@@ -256,12 +271,16 @@ Quelques points de conception :
 
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
-- Les fluides ne s'écoulent pas ; l'eau et la lave sont statiques.
-- Les formes non cubiques se limitent à deux boîtes par bloc : dalles et
-  escaliers passent, mais un muret ou une clôture, qui en demandent plus,
+- Les fluides ne s'écoulent pas : l'eau et la lave sont statiques, et ce qu'on
+  verse au seau reste une source isolée.
+- Les formes non cubiques se limitent à deux boîtes par bloc : dalles, escaliers
+  et menuiserie passent, mais un muret ou une clôture, qui en demandent plus,
   restent hors de portée du mailleur.
-- Les escaliers ne se posent qu'à l'endroit : les variantes retournées sous un
-  plafond coûteraient 24 identifiants de bloc de plus.
+- Il ne reste que **14 identifiants de bloc libres** sur 256 : toute famille
+  orientée supplémentaire demanderait de passer les identifiants sur 16 bits.
+- Les escaliers ne se posent qu'à l'endroit et les portes n'ont qu'un sens de
+  battant : les variantes retournées ou à gonds inversés doubleraient le nombre
+  d'identifiants pour un usage bien plus rare.
 - Le lancer de rayon vise le voxel entier : on peut cibler une dalle ou la
   moitié creuse d'un escalier en visant du vide.
 - Une seule cascade d'ombre : au-delà du rayon couvert (48 à 110 blocs selon la

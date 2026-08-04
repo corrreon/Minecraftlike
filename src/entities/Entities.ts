@@ -26,7 +26,7 @@ import { moveBox, type Box } from '../player/physics';
 import { mulberry32 } from '../world/noise';
 
 export type MobKind =
-  | 'pig' | 'cow' | 'sheep' | 'chicken'
+  | 'pig' | 'cow' | 'sheep' | 'chicken' | 'horse'
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
   | 'blaze' | 'enderman' | 'ender_dragon';
@@ -57,6 +57,8 @@ interface MobTraits {
   erratic?: boolean;
   /** Se téléporte à courte distance quand on l'attaque. */
   blinks?: boolean;
+  /** Le joueur peut la monter : elle obéit alors au lieu d'errer. */
+  rideable?: boolean;
   /**
    * Boss : tourne en orbite autour du centre de l'île et pique sur le joueur.
    * `[rayon, altitude]` de l'orbite.
@@ -139,6 +141,25 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'l3', size: [0.2, 0.56, 0.2], offset: [-0.22, 0.28, 0.34], color: 0xdad4c4, anim: 'legBL' },
       { name: 'l4', size: [0.2, 0.56, 0.2], offset: [0.22, 0.28, 0.34], color: 0xdad4c4, anim: 'legBR' },
     ]),
+  horse: M('Cheval', false, 22, 2.1, 1.1, 1.6, 0, 0, 3,
+    [{ key: 'leather', min: 0, max: 2 }],
+    [
+      { name: 'body', size: [0.78, 0.74, 1.5], offset: [0, 1.1, 0], color: 0x8b5a2b },
+      { name: 'neck', size: [0.34, 0.62, 0.42], offset: [0, 1.5, -0.72], color: 0x7d5027, anim: 'head' },
+      { name: 'head', size: [0.34, 0.34, 0.62], offset: [0, 1.72, -1.06], color: 0x8b5a2b, anim: 'head' },
+      { name: 'muzzle', size: [0.28, 0.24, 0.16], offset: [0, 1.6, -1.4], color: 0x5d3a1c, anim: 'head' },
+      { name: 'eyeL', size: [0.09, 0.09, 0.06], offset: [-0.16, 1.8, -1.3], color: 0x140f0c, anim: 'head' },
+      { name: 'eyeR', size: [0.09, 0.09, 0.06], offset: [0.16, 1.8, -1.3], color: 0x140f0c, anim: 'head' },
+      { name: 'earL', size: [0.08, 0.16, 0.08], offset: [-0.12, 1.94, -0.98], color: 0x6d4522, anim: 'head' },
+      { name: 'earR', size: [0.08, 0.16, 0.08], offset: [0.12, 1.94, -0.98], color: 0x6d4522, anim: 'head' },
+      { name: 'mane', size: [0.14, 0.2, 0.72], offset: [0, 1.78, -0.66], color: 0x3a2412, anim: 'head' },
+      { name: 'saddle', size: [0.72, 0.12, 0.5], offset: [0, 1.5, -0.06], color: 0x54331a },
+      { name: 'tail', size: [0.16, 0.5, 0.16], offset: [0, 1.3, 0.82], color: 0x3a2412, anim: 'tail' },
+      { name: 'l1', size: [0.24, 0.78, 0.24], offset: [-0.26, 0.39, -0.5], color: 0x82522a, anim: 'legFL' },
+      { name: 'l2', size: [0.24, 0.78, 0.24], offset: [0.26, 0.39, -0.5], color: 0x82522a, anim: 'legFR' },
+      { name: 'l3', size: [0.24, 0.78, 0.24], offset: [-0.26, 0.39, 0.52], color: 0x82522a, anim: 'legBL' },
+      { name: 'l4', size: [0.24, 0.78, 0.24], offset: [0.26, 0.39, 0.52], color: 0x82522a, anim: 'legBR' },
+    ], { rideable: true }),
   chicken: M('Poule', false, 4, 1.6, 0.5, 0.7, 0, 0, 1,
     [{ key: 'chicken', min: 1, max: 1 }, { key: 'feather', min: 0, max: 2 }],
     [
@@ -412,6 +433,12 @@ export class Mob {
   threat: Mob | null = null;
   /** Phase de rebond, pour les créatures qui sautillent. */
   private hopTimer = 0;
+  /** Montée par le joueur : elle obéit aux commandes plutôt qu'à son IA. */
+  ridden = false;
+  /** Commande du cavalier : direction souhaitée dans le repère du monde, et saut. */
+  driveX = 0;
+  driveZ = 0;
+  driveJump = false;
   /** Téléportation demandée par un coup reçu (enderman). */
   private blinkPending = false;
   private blinkCooldown = 0;
@@ -463,7 +490,9 @@ export class Mob {
 
     // --- Décision ---
     let wishX = 0, wishZ = 0;
-    if (guarding) {
+    if (this.ridden) {
+      this.aggro = false;
+    } else if (guarding) {
       this.aggro = true;
     } else if (d.hostile && playerReachable && dist < d.aggroRange) {
       this.aggro = true;
@@ -471,7 +500,14 @@ export class Mob {
       this.aggro = false;
     }
 
-    if (d.orbit) {
+    if (this.ridden) {
+      // Sous la selle, la monture n'écoute plus qu'une chose : le cavalier.
+      // Ce cas doit venir avant l'errance, qui écraserait sinon la commande.
+      wishX = this.driveX;
+      wishZ = this.driveZ;
+      if (wishX !== 0 || wishZ !== 0) this.yaw = Math.atan2(wishX, wishZ);
+      if (this.driveJump && this.onGround) this.velocity.y = 9.5;
+    } else if (d.orbit) {
       // Le boss suit son propre plan de vol : ni errance ni poursuite directe.
       this.aggro = true;
       const [radius, height] = d.orbit;
@@ -559,7 +595,9 @@ export class Mob {
     // Une créature qui sautille n'avance qu'en l'air : au sol elle prend son élan.
     const airborne = d.hops === true && !this.onGround && !this.inWater;
     const grounded = d.hops === true && this.onGround && !this.inWater;
-    let speed = d.speed * (this.aggro ? 1 : 0.7);
+    // Une monture doit dépasser la course à pied (5,9 m/s), sinon elle ne sert
+    // à rien : 2,1 × 3,4 ≈ 7,1 m/s.
+    let speed = this.ridden ? d.speed * 3.4 : d.speed * (this.aggro ? 1 : 0.7);
     if (d.hops) speed *= airborne ? 1 : 0.15;
     if (d.aquatic && !this.inWater) speed *= 0.3; // échoué : presque immobile
     this.velocity.x += (wishX * speed - this.velocity.x) * Math.min(1, (grounded ? 3 : 9) * dt);

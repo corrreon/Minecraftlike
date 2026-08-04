@@ -54,7 +54,7 @@ import { PostFX, projectSun } from '../render/PostFX';
 import { Sky, computeSkyState, createSkyState, type SkyState } from '../render/Sky';
 import { ShadowMap } from '../render/ShadowMap';
 import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type PlayerSave, type WorldMeta } from '../save/SaveManager';
-import { B, BLOCKS, BLOCK_BY_KEY, IS_SOLID, RenderKind, block as blockDef } from '../world/blocks';
+import { B, BLOCKS, BLOCK_BY_KEY, IS_SOLID, RenderKind, block as blockDef, type Facing } from '../world/blocks';
 import { biomeDef } from '../world/biomes';
 import { ChunkState } from '../world/Chunk';
 import { World } from '../world/World';
@@ -66,6 +66,13 @@ import { buildIcons } from '../ui/icons';
 import { mulberry32 } from '../world/noise';
 
 const MOB_TICK = 1.8;
+/** Plafond d'objets au sol, et durée au bout de laquelle ils s'effacent. */
+const MAX_DROPS = 320;
+const DROP_LIFETIME = 300;
+/** Les six voisins d'une case, pour les tests de contact fluide. */
+const NEIGHBOURS: readonly (readonly [number, number, number])[] = [
+  [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
+];
 const AUTOSAVE_INTERVAL = 25;
 
 interface HeldView {
@@ -103,6 +110,8 @@ export class Game {
 
   private mobs: Mob[] = [];
   private drops: ItemEntity[] = [];
+  /** Créature actuellement montée, ou null. */
+  private mount: Mob | null = null;
   private entityGroup = new Group();
   private particles!: ParticleSystem;
   private weather = new Weather();
@@ -285,6 +294,65 @@ export class Game {
     const kind = this.structGen?.lootKindAt(x, y, z) ?? null;
     if (!kind) return { kind: null, items: [] };
     return { kind, items: [...rollLoot(kind, x, y, z, 27).values()].map((s) => `${s.item.key}×${s.count}`) };
+  }
+
+  /**
+   * Rejoue un clic droit sur une face de bloc donnée, sans passer par le
+   * lancer de rayon. Sert aux tests : viser à la souris depuis un script est
+   * fragile, alors que la face visée, elle, est sans ambiguïté.
+   */
+  debugUse(x: number, y: number, z: number, nx = 0, ny = 1, nz = 0): void {
+    const block = this.world.getBlock(x, y, z);
+    if (block < 0) return;
+    this.useItem({
+      x, y, z, block, nx, ny, nz,
+      point: new Vector3(x + 0.5 + nx * 0.5, y + 0.5 + ny * 0.5, z + 0.5 + nz * 0.5),
+      distance: 2,
+    });
+  }
+
+  /** Fait apparaître une créature à une position donnée. */
+  debugSpawn(kind: string, x: number, y: number, z: number): boolean {
+    if (!(kind in MOBS)) return false;
+    this.addMob(kind as MobKind, x, y, z);
+    return true;
+  }
+
+  /**
+   * Casse un bloc comme le ferait le dernier coup de pioche : butin compris.
+   * Le lancer de rayon dépend du regard et de la distance, ce qui rend les
+   * tests fragiles ; ici la cible est explicite.
+   */
+  debugBreak(x: number, y: number, z: number): boolean {
+    const block = this.world.getBlock(x, y, z);
+    if (block <= 0) return false;
+    this.destroyBlock({
+      x, y, z, block, nx: 0, ny: 1, nz: 0,
+      point: new Vector3(x + 0.5, y + 1, z + 0.5),
+      distance: 2,
+    }, true);
+    return true;
+  }
+
+  /** Relevé des créatures vivantes : espèce et position. */
+  debugMobs(): { kind: string; position: number[] }[] {
+    return this.mobs.filter((m) => !m.dead)
+      .map((m) => ({ kind: m.kind, position: m.position.toArray().map((v) => +v.toFixed(2)) }));
+  }
+
+  /** Créature montée, s'il y en a une. */
+  debugMount(): { kind: string; position: number[]; drive: number[]; yaw: number } | null {
+    const m = this.mount;
+    return m
+      ? { kind: m.kind, position: m.position.toArray(), drive: [m.driveX, m.driveZ], yaw: this.player.yaw }
+      : null;
+  }
+
+  /** Objets au sol, par clé : contrôle de la fusion des piles. */
+  debugDrops(): Record<string, number> {
+    const out: Record<string, number> = {};
+    for (const d of this.drops) out[d.stack.item.key] = (out[d.stack.item.key] ?? 0) + d.stack.count;
+    return out;
   }
 
   /** Pose un bloc par sa clé : mise en place de scénarios de test. */
@@ -525,6 +593,8 @@ export class Game {
     }
     if (this.pool) this.pool.dispose();
     if (this.particles) this.scene.remove(this.particles.mesh);
+    this.mount = null;
+    this.player.riding = false;
     for (const m of this.mobs) { this.entityGroup.remove(m.group); m.dispose(); }
     for (const d of this.drops) { this.entityGroup.remove(d.object); d.dispose(); }
     this.mobs = [];
@@ -1144,8 +1214,10 @@ export class Game {
     if (active) this.updateInteraction(dt);
     else { this.breakProgress = 0; this.outline.visible = false; this.breakOverlay.visible = false; }
 
-    // Entités.
+    // Entités. La monture est replacée après elles : le cavalier suit sa
+    // créature, jamais l'inverse.
     this.updateEntities(dt, active);
+    if (active) this.updateMount(dt);
     this.updateBlockEntities(dt);
     if (this.settings.particles) this.particles.update(dt, this.skyState.dayFactor);
 
@@ -1538,6 +1610,8 @@ export class Game {
     const def = blockDef(hit.block);
     const creative = this.player.mode === GameMode.Creative;
     this.setBlock(hit.x, hit.y, hit.z, 0);
+    // Porte et lit tiennent sur deux cases : casser l'une emporte l'autre.
+    this.breakPairedHalf(hit.x, hit.y, hit.z, def.key);
     this.audio.break(def.sound as SoundGroup);
     if (this.settings.particles) {
       this.particles.burstBlock(hit.x, hit.y, hit.z, this.atlas.tileAverage(def.layers.side), 16);
@@ -1609,6 +1683,15 @@ export class Game {
   private useItem(hit: RaycastHit | null): void {
     const stackHeld = this.inventory.selectedStack;
 
+    // Monter une créature montable visée : ça passe avant tout le reste, sinon
+    // on poserait un bloc dans le cheval.
+    if (!this.mount) {
+      const eye = this.player.eyePosition.clone();
+      const dir = this.player.forward.clone().normalize();
+      const aimed = this.pickMob(eye, dir, REACH_SURVIVAL);
+      if (aimed?.def.rideable) { this.mountMob(aimed); return; }
+    }
+
     // Interaction avec un bloc « conteneur ».
     if (hit && !this.player.sneaking) {
       const key = blockDef(hit.block).key;
@@ -1617,6 +1700,9 @@ export class Game {
       if (key === 'chest') { this.openContainer(hit, 'chest'); return; }
       // Sertir un œil de l'Ender dans un cadre de portail.
       if (key === 'end_portal_frame' && this.fillPortalFrame(hit.x, hit.y, hit.z)) return;
+      if (key.startsWith('oak_door_')) { this.toggleDoor(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
+      if (key.startsWith('oak_fence_gate_')) { this.toggleGate(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
+      if (key.startsWith('red_bed_')) { this.sleep(hit.x, hit.y, hit.z); return; }
     }
 
     // Le briquet allume un cadre d'obsidienne : c'est la porte du Nether.
@@ -1634,6 +1720,11 @@ export class Game {
 
     if (!stackHeld) return;
     const item = stackHeld.item;
+
+    // Seaux : puiser, verser, et figer la lave en obsidienne.
+    if (item.key === 'bucket' || item.key === 'water_bucket' || item.key === 'lava_bucket') {
+      if (this.useBucket(item.key, hit)) return;
+    }
 
     // Nourriture.
     if (item.food && this.player.mode === GameMode.Survival && this.player.stats.food < 20) {
@@ -1665,6 +1756,10 @@ export class Game {
     if (target !== 0 && !blockDef(target).replaceable) return;
     if (this.blocksPlayer(nx, ny, nz, item.block)) return;
 
+    // Porte et lit occupent deux cellules : leur pose a ses propres règles.
+    if (item.key === 'oak_door') { this.placeDoor(nx, ny, nz); return; }
+    if (item.key === 'red_bed') { this.placeBed(nx, ny, nz); return; }
+
     // Une dalle se pose en bas ou en haut du voxel selon l'endroit visé.
     let placeId = item.block;
     const placeDef = blockDef(placeId);
@@ -1677,12 +1772,14 @@ export class Game {
     // Un escalier se tourne selon le regard : la marche haute est du côté où
     // l'on regarde, de sorte qu'on gravit dans le sens où l'on avance.
     if (placeDef.key.endsWith('_stairs_north')) {
-      const f = this.player.forward;
-      const facing = Math.abs(f.x) > Math.abs(f.z)
-        ? (f.x > 0 ? 'east' : 'west')
-        : (f.z > 0 ? 'south' : 'north');
       const base = placeDef.key.slice(0, -'_north'.length);
-      placeId = BLOCK_BY_KEY.get(`${base}_${facing}`)?.id ?? placeId;
+      placeId = BLOCK_BY_KEY.get(`${base}_${this.viewFacing()}`)?.id ?? placeId;
+    }
+
+    // Le portillon barre le passage : son battant se met en travers du regard,
+    // ce que donne directement l'orientation de la vue.
+    if (placeDef.key === 'oak_fence_gate_north_closed') {
+      placeId = BLOCK_BY_KEY.get(`oak_fence_gate_${this.viewFacing()}_closed`)?.id ?? placeId;
     }
 
     this.setBlock(nx, ny, nz, placeId);
@@ -1690,6 +1787,270 @@ export class Game {
     this.heldView.swing = 1;
     if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
     this.applyGravityBlocks(nx, ny, nz);
+  }
+
+  // --- Monture -------------------------------------------------------------
+
+  private mountMob(m: Mob): void {
+    this.mount = m;
+    m.ridden = true;
+    this.player.riding = true;
+    this.player.velocity.set(0, 0, 0);
+    // Le même appui ne doit pas enchaîner sur l'usage de l'objet tenu : sans
+    // ce délai, monter en tenant un seau vidait le seau sous la monture.
+    this.placeCooldown = 0.6;
+    this.hud.toast('En selle. Accroupis-toi pour descendre.');
+    this.audio.click();
+  }
+
+  private dismount(): void {
+    const m = this.mount;
+    if (!m) return;
+    m.ridden = false;
+    m.driveX = 0;
+    m.driveZ = 0;
+    m.driveJump = false;
+    this.mount = null;
+    this.player.riding = false;
+    // On descend sur le côté, jamais dans la monture.
+    this.player.position.set(m.position.x + m.def.width + 0.2, m.position.y + 0.4, m.position.z);
+    this.player.velocity.set(0, 0, 0);
+  }
+
+  /**
+   * Transmet les commandes du cavalier à sa monture et l'y assoit. Le joueur
+   * n'a plus de physique propre tant qu'il est en selle : il suit la créature.
+   */
+  private updateMount(dt: number): void {
+    const m = this.mount;
+    if (!m) return;
+    if (m.dead || this.player.dead || this.player.mode === GameMode.Spectator) { this.dismount(); return; }
+
+    const st = this.input.state;
+    if (st.sneak) { this.dismount(); return; }
+
+    // Le repère est celui du joueur : « avant » vaut (-sin yaw, -cos yaw).
+    const ix = (st.right ? 1 : 0) - (st.left ? 1 : 0) + st.moveX;
+    const iz = (st.back ? 1 : 0) - (st.forward ? 1 : 0) + st.moveY;
+    const sin = Math.sin(this.player.yaw);
+    const cos = Math.cos(this.player.yaw);
+    let dx = ix * cos + iz * sin;
+    let dz = iz * cos - ix * sin;
+    const mag = Math.hypot(dx, dz);
+    if (mag > 1) { dx /= mag; dz /= mag; }
+    m.driveX = dx;
+    m.driveZ = dz;
+    m.driveJump = st.jump;
+
+    // Le joueur est assis sur le dos : à l'aplomb de la créature, à sa hauteur
+    // de garrot. `dt` sert à lisser la descente de selle sur les terrains bosselés.
+    const seat = m.position.y + m.def.height * 0.62;
+    this.player.position.x = m.position.x;
+    this.player.position.z = m.position.z;
+    this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
+    this.player.velocity.set(0, 0, 0);
+    this.player.onGround = m.onGround;
+  }
+
+  // --- Seaux ---------------------------------------------------------------
+
+  /**
+   * Puise ou verse un fluide. Verser de l'eau sur de la lave la fige en
+   * obsidienne : c'est la route vers le portail du Nether quand on n'a pas
+   * trouvé de portail englouti.
+   *
+   * @returns vrai si le seau a servi (auquel cas rien d'autre ne doit suivre).
+   */
+  private useBucket(key: string, hit: RaycastHit | null): boolean {
+    if (!hit) return false;
+    const creative = this.player.mode === GameMode.Creative;
+    const swap = (to: string): void => {
+      if (creative) return;
+      const def = ITEM_BY_KEY.get(to);
+      this.inventory.main.set(this.inventory.selected, def ? makeStack(def, 1) : null);
+    };
+    this.heldView.swing = 1;
+
+    if (key === 'bucket') {
+      if (hit.block !== B.water && hit.block !== B.lava) return false;
+      this.setBlock(hit.x, hit.y, hit.z, 0);
+      swap(hit.block === B.water ? 'water_bucket' : 'lava_bucket');
+      this.audio.place('liquid');
+      return true;
+    }
+
+    // L'eau versée directement sur la lave la refroidit sur place.
+    if (key === 'water_bucket' && hit.block === B.lava) {
+      this.setBlock(hit.x, hit.y, hit.z, B.obsidian);
+      swap('bucket');
+      this.audio.break('stone');
+      this.hud.toast('La lave se fige en obsidienne.');
+      return true;
+    }
+
+    const tx = hit.x + hit.nx, ty = hit.y + hit.ny, tz = hit.z + hit.nz;
+    if (ty < 0 || ty >= WORLD_HEIGHT) return false;
+    const at = this.world.getBlock(tx, ty, tz);
+    if (at < 0 || (at !== 0 && !blockDef(at).replaceable)) return false;
+    // Verser de l'eau contre de la lave la fige aussi : c'est le geste naturel
+    // quand on se tient au bord d'un lac.
+    if (key === 'water_bucket') {
+      for (const [dx, dy, dz] of NEIGHBOURS) {
+        if (this.world.getBlock(tx + dx, ty + dy, tz + dz) !== B.lava) continue;
+        this.setBlock(tx + dx, ty + dy, tz + dz, B.obsidian);
+        swap('bucket');
+        this.audio.break('stone');
+        this.hud.toast('La lave se fige en obsidienne.');
+        return true;
+      }
+    }
+    this.setBlock(tx, ty, tz, key === 'water_bucket' ? B.water : B.lava);
+    swap('bucket');
+    this.audio.place('liquid');
+    return true;
+  }
+
+  // --- Menuiserie : porte, portillon, lit ----------------------------------
+
+  /** Orientation cardinale du regard, dans la convention des blocs orientés. */
+  private viewFacing(): Facing {
+    const f = this.player.forward;
+    return Math.abs(f.x) > Math.abs(f.z) ? (f.x > 0 ? 'east' : 'west') : (f.z > 0 ? 'south' : 'north');
+  }
+
+  /** Décalage d'une case dans la direction donnée. */
+  private static readonly STEP: Record<Facing, [number, number]> = {
+    north: [0, -1], south: [0, 1], west: [-1, 0], east: [1, 0],
+  };
+
+  /**
+   * Une porte tient sur deux cases empilées : sans la place au-dessus, on ne
+   * pose rien plutôt que de laisser une demi-porte.
+   */
+  private placeDoor(x: number, y: number, z: number): void {
+    const above = this.world.getBlock(x, y + 1, z);
+    if (above !== 0 && !(above > 0 && blockDef(above).replaceable)) {
+      this.hud.toast('Il faut deux blocs de haut pour une porte.');
+      return;
+    }
+    if (this.blocksPlayer(x, y + 1, z, 1)) return;
+    const facing = this.viewFacing();
+    const lower = BLOCK_BY_KEY.get(`oak_door_${facing}_lower_closed`)!.id;
+    const upper = BLOCK_BY_KEY.get(`oak_door_${facing}_upper_closed`)!.id;
+    this.setBlock(x, y, z, lower);
+    this.setBlock(x, y + 1, z, upper);
+    this.audio.place('wood');
+    this.heldView.swing = 1;
+    if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+  }
+
+  /** Un lit s'étend sur deux cases au sol, la tête devant le joueur. */
+  private placeBed(x: number, y: number, z: number): void {
+    const facing = this.viewFacing();
+    const [dx, dz] = Game.STEP[facing];
+    const hx = x + dx, hz = z + dz;
+    const head = this.world.getBlock(hx, y, hz);
+    if (head < 0 || (head !== 0 && !blockDef(head).replaceable)) {
+      this.hud.toast('Il faut deux cases libres pour un lit.');
+      return;
+    }
+    if (!IS_SOLID[this.world.getBlock(x, y - 1, z)] || !IS_SOLID[this.world.getBlock(hx, y - 1, hz)]) {
+      this.hud.toast('Le lit doit reposer sur un sol plein.');
+      return;
+    }
+    this.setBlock(x, y, z, BLOCK_BY_KEY.get(`red_bed_${facing}_foot`)!.id);
+    this.setBlock(hx, y, hz, BLOCK_BY_KEY.get(`red_bed_${facing}_head`)!.id);
+    this.audio.place('wool');
+    this.heldView.swing = 1;
+    if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+  }
+
+  /**
+   * Ouvre ou ferme une porte. Les deux moitiés basculent ensemble : elles se
+   * distinguent par leur texture, pas par leur état.
+   */
+  private toggleDoor(x: number, y: number, z: number): void {
+    const key = blockDef(this.world.getBlock(x, y, z)).key;
+    const m = /^oak_door_(\w+?)_(lower|upper)_(closed|open)$/.exec(key);
+    if (!m) return;
+    const [, facing, half, state] = m;
+    const next = state === 'closed' ? 'open' : 'closed';
+    const other = half === 'lower' ? y + 1 : y - 1;
+    this.setBlock(x, y, z, BLOCK_BY_KEY.get(`oak_door_${facing}_${half}_${next}`)!.id);
+    const otherKey = blockDef(this.world.getBlock(x, other, z)).key;
+    if (otherKey.startsWith('oak_door_')) {
+      const otherHalf = half === 'lower' ? 'upper' : 'lower';
+      this.setBlock(x, other, z, BLOCK_BY_KEY.get(`oak_door_${facing}_${otherHalf}_${next}`)!.id);
+    }
+    this.audio.place('wood');
+  }
+
+  private toggleGate(x: number, y: number, z: number): void {
+    const m = /^oak_fence_gate_(\w+?)_(closed|open)$/.exec(blockDef(this.world.getBlock(x, y, z)).key);
+    if (!m) return;
+    const next = m[2] === 'closed' ? 'open' : 'closed';
+    // Refuser de refermer un portillon sur le joueur : il resterait coincé.
+    const id = BLOCK_BY_KEY.get(`oak_fence_gate_${m[1]}_${next}`)!.id;
+    if (next === 'closed' && this.blocksPlayer(x, y, z, id)) return;
+    this.setBlock(x, y, z, id);
+    this.audio.place('wood');
+  }
+
+  /**
+   * Dormir : passe au matin et fixe le point de réapparition. Refusé de jour et
+   * tant qu'une créature hostile rôde — sinon le lit annulerait toute la nuit.
+   */
+  private sleep(x: number, y: number, z: number): void {
+    if (this.dimension !== 'overworld') {
+      this.hud.toast('Impossible de dormir ici.');
+      return;
+    }
+    // Le point de réapparition se règle de jour comme de nuit ; seul le saut
+    // de la nuit demande qu'il fasse effectivement nuit.
+    const night = this.dayTime > 0.5;
+    this.spawnPoint.set(x + 0.5, y + 1, z + 0.5);
+    if (!night) {
+      this.hud.toast('Point de réapparition enregistré.');
+      return;
+    }
+    const monster = this.mobs.find((m) => m.def.hostile && !m.dead && m.position.distanceTo(this.player.position) < 12);
+    if (monster) {
+      this.hud.toast('Impossible de dormir, il y a des monstres tout près.');
+      return;
+    }
+    this.dayTime = 0.02;
+    this.player.stats.health = Math.min(this.player.stats.maxHealth, this.player.stats.health + 2);
+    this.hud.toast('Bonne nuit. Point de réapparition enregistré.');
+    this.audio.click();
+  }
+
+  /**
+   * Retire l'autre moitié d'une porte ou d'un lit. Sans ça, casser le bas
+   * laisserait le haut flotter en l'air.
+   */
+  private breakPairedHalf(x: number, y: number, z: number, key: string): void {
+    let ox = x, oy = y, oz = z;
+    if (key.startsWith('oak_door_')) {
+      oy = key.includes('_lower_') ? y + 1 : y - 1;
+    } else if (key.startsWith('red_bed_')) {
+      const m = /^red_bed_(\w+?)_(foot|head)$/.exec(key)!;
+      const [dx, dz] = Game.STEP[m[1] as Facing];
+      // La tête est devant le pied : on remonte dans l'autre sens depuis la tête.
+      const s = m[2] === 'foot' ? 1 : -1;
+      ox = x + dx * s;
+      oz = z + dz * s;
+    } else {
+      return;
+    }
+    const other = this.world.getBlock(ox, oy, oz);
+    if (other <= 0) return;
+    const otherKey = blockDef(other).key;
+    const family = key.startsWith('oak_door_') ? 'oak_door_' : 'red_bed_';
+    if (!otherKey.startsWith(family)) return;
+    this.setBlock(ox, oy, oz, 0);
+    if (this.settings.particles) {
+      this.particles.burstBlock(ox, oy, oz, this.atlas.tileAverage(blockDef(other).layers.side), 10);
+    }
   }
 
   private openContainer(hit: RaycastHit, kind: 'furnace' | 'chest'): void {
@@ -1852,6 +2213,8 @@ export class Game {
     if (this.chunks) { this.chunks.dispose(); this.scene.remove(this.chunks.group); }
     if (this.pool) this.pool.dispose();
     if (this.particles) this.scene.remove(this.particles.mesh);
+    this.mount = null;
+    this.player.riding = false;
     for (const m of this.mobs) { this.entityGroup.remove(m.group); m.dispose(); }
     for (const d of this.drops) { this.entityGroup.remove(d.object); d.dispose(); }
     this.mobs = [];
@@ -2052,7 +2415,22 @@ export class Game {
   }
 
   private spawnDrop(x: number, y: number, z: number, s: ItemStack): void {
-    if (this.drops.length > 220) {
+    // Fusion : une veine de charbon, un arbre abattu ou une explosion créent
+    // des dizaines de piles au même endroit. Les regrouper évite d'atteindre le
+    // plafond d'entités — au-delà duquel du butin disparaissait sans être vu.
+    if (s.item.maxStack > 1 && !s.item.durability) {
+      for (const d of this.drops) {
+        if (d.dead || d.stack.item !== s.item || d.stack.damage !== s.damage) continue;
+        if (d.stack.count + s.count > s.item.maxStack) continue;
+        const dx = d.position.x - x, dy = d.position.y - y, dz = d.position.z - z;
+        if (dx * dx + dy * dy + dz * dz > 6.25) continue;
+        d.stack.count += s.count;
+        // Le compteur repart de zéro : une pile qu'on alimente ne périme pas.
+        d.age = 0;
+        return;
+      }
+    }
+    if (this.drops.length >= MAX_DROPS) {
       const old = this.drops.shift()!;
       this.entityGroup.remove(old.object);
       old.dispose();
@@ -2246,6 +2624,9 @@ export class Game {
     for (let i = this.drops.length - 1; i >= 0; i--) {
       const d = this.drops[i];
       d.update(dt, this.world, this.player.position, dayFactor);
+      // Un objet oublié finit par disparaître : c'est ce qui garde de la place
+      // pour le butin qu'on est en train de miner.
+      if (d.age > DROP_LIFETIME) d.dead = true;
       if (!d.dead && d.canPickup(this.player.position)) {
         const left = this.inventory.give(d.stack);
         if (!left) {
@@ -2308,7 +2689,7 @@ export class Game {
       ? night && Math.random() < 0.12
         ? ['enderman'] // l'enderman ne sort que la nuit, et rarement
         : ['zombie', 'skeleton', 'creeper', 'spider', 'bloop']
-      : ['pig', 'cow', 'sheep', 'chicken'];
+      : ['pig', 'cow', 'sheep', 'chicken', 'horse'];
     const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const def = MOBS[kind];
     const spot = findSpawnSpot(

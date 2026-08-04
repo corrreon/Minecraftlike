@@ -4,7 +4,7 @@
  * objets qui n'existent pas sous forme de bloc.
  */
 
-import { BLOCKS, BLOCK_BY_KEY, STAIR_FACINGS, STAIR_MATERIALS, RenderKind, type ToolKind } from '../world/blocks';
+import { BLOCKS, BLOCK_BY_KEY, FACINGS, STAIR_FACINGS, STAIR_MATERIALS, RenderKind, type ToolKind } from '../world/blocks';
 
 export interface ToolStats {
   kind: ToolKind;
@@ -94,6 +94,7 @@ for (const b of BLOCKS) {
   // jamais au milieu.
   if (b.key === 'dragon_egg') continue;
   if (b.key.includes('_stairs_')) continue;
+  if (b.key.startsWith('oak_door_') || b.key.startsWith('oak_fence_gate_') || b.key.startsWith('red_bed_')) continue;
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -274,6 +275,42 @@ for (const [key, name] of STAIR_MATERIALS) {
   }
 }
 
+// Même principe pour la menuiserie : un objet, plusieurs blocs. La porte et le
+// lit occupent deux blocs, mais ne se ramassent qu'une fois.
+{
+  const door = item('oak_door', {
+    name: 'Porte de chêne', block: BLOCK_BY_KEY.get('oak_door_north_lower_closed')!.id,
+    icon: 'block', fuel: 10,
+  });
+  const gate = item('oak_fence_gate', {
+    name: 'Portillon de chêne', block: BLOCK_BY_KEY.get('oak_fence_gate_north_closed')!.id,
+    icon: 'block', fuel: 15,
+  });
+  const bed = item('red_bed', {
+    name: 'Lit rouge', maxStack: 1, block: BLOCK_BY_KEY.get('red_bed_north_foot')!.id,
+    icon: 'block', color: 0xa62b2b,
+  });
+  for (const facing of FACINGS) {
+    for (const half of ['lower', 'upper'] as const) {
+      for (const state of ['closed', 'open'] as const) {
+        ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`oak_door_${facing}_${half}_${state}`)!.id, door);
+      }
+    }
+    for (const state of ['closed', 'open'] as const) {
+      ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`oak_fence_gate_${facing}_${state}`)!.id, gate);
+    }
+    for (const half of ['foot', 'head'] as const) {
+      ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`red_bed_${facing}_${half}`)!.id, bed);
+    }
+  }
+}
+
+// Seaux : la seule façon de transporter un fluide, et donc de figer la lave en
+// obsidienne pour bâtir un portail sans dépendre d'un coffre de structure.
+item('bucket', { name: 'Seau', maxStack: 1, color: 0xb0b6bd, icon: 'nugget' });
+item('water_bucket', { name: 'Seau d’eau', maxStack: 1, color: 0x3a6fd8, icon: 'nugget' });
+item('lava_bucket', { name: 'Seau de lave', maxStack: 1, color: 0xe06a1a, icon: 'nugget', fuel: 1000 });
+
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];
 }
@@ -395,6 +432,8 @@ export function itemCategory(def: ItemDef): ItemCategory {
   if (key === 'tnt' || key === 'crafting_table' || key === 'furnace' || key === 'chest' || key === 'bookshelf') {
     return 'redstone';
   }
+  // Menuiserie : ce sont des mécanismes, on les ouvre et on les ferme.
+  if (key === 'oak_door' || key === 'oak_fence_gate' || key === 'red_bed') return 'redstone';
   if (NATURE_KEYS.has(key)) return 'nature';
   const b = BLOCKS[def.block];
   if (b && (b.render === RenderKind.Cross || key.endsWith('_leaves') || key.endsWith('_log') || key.endsWith('_sapling'))) {

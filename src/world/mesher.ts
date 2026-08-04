@@ -11,7 +11,7 @@
  */
 
 import { CHUNK_X, CHUNK_Z, WORLD_HEIGHT } from '../core/constants';
-import { IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
+import { IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, ROT_TOP, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
 
 export const PAD = 1;
 export const PX = CHUNK_X + 2 * PAD;
@@ -491,6 +491,7 @@ function emitCrosses(blocks: Uint8Array, light: Uint8Array, out: LayerBuilder): 
 
 const BOX_POS = new Float32Array(12);
 const BOX_UV = new Float32Array(8);
+const ROT_UV = new Float32Array(8);
 
 /**
  * Émet la géométrie des blocs qui ne remplissent pas leur voxel — pour
@@ -577,10 +578,28 @@ function emitPartials(blocks: Uint8Array, light: Uint8Array, builders: LayerBuil
             const uw = ny !== 0 ? bx1 - bx0 : nx !== 0 ? bz1 - bz0 : bx1 - bx0;
             const vh = ny !== 0 ? bz1 - bz0 : by1 - by0;
             U[0] = 0; U[1] = 0; U[2] = uw; U[3] = 0; U[4] = uw; U[5] = vh; U[6] = 0; U[7] = vh;
+            // Le motif du dessus peut avoir un sens : l'oreiller d'un lit doit
+            // pointer vers la tête. On fait tourner les coins d'un quart de
+            // tour à la fois plutôt que de multiplier les textures.
+            const rot = ny > 0 ? ROT_TOP[id] : 0;
+            if (rot !== 0) {
+              for (let i = 0; i < 4; i++) {
+                const src = ((i + rot) & 3) * 2;
+                ROT_UV[i * 2] = U[src];
+                ROT_UV[i * 2 + 1] = U[src + 1];
+              }
+              U.set(ROT_UV);
+            }
 
-            // Les quatre sommets tournent dans le sens direct vu de la normale ;
-            // trois des six faces demandent l'ordre inverse.
-            const reverse = ny < 0 || nx < 0 || nz < 0;
+            // Les quatre sommets doivent tourner dans le sens direct vu de la
+            // normale, sinon la face est éliminée comme face arrière.
+            //
+            // L'ordre des coins n'est pas le même selon l'axe : sur les faces
+            // horizontales et sur X on parcourt le quad à l'envers de ce que
+            // demande la normale, sur Z dans le bon sens. Se fier au seul signe
+            // de la normale masquait quatre faces sur six — dalles, escaliers
+            // et menuiserie n'ont longtemps montré que leurs flancs en Z.
+            const reverse = ny !== 0 ? ny > 0 : nx !== 0 ? nx > 0 : nz < 0;
             out.quad(P, nx * 127, ny * 127, nz * 127, U, r, g, b, packed, packed, packed, packed, reverse, false);
           }
         }

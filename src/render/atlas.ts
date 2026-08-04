@@ -621,6 +621,48 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
       for (let x = 4; x < 12; x++) { t.px(x, y, rgb(0x2a2a2a), 255, 0.9 + r() * 0.2); t.pxHeight(x, y, 0.1); }
     for (let x = 5; x < 11; x++) t.px(x, 12, rgb(0x5a5a5a), 255);
   },
+  // Porte : deux tuiles empilées. Le battant est cerné d'un dormant sombre, la
+  // moitié haute reçoit une fenêtre à petits carreaux, la basse la poignée.
+  door_lower: (t, r) => {
+    planks(t, rgb(0xa9814d), r, 6, true);
+    for (let y = 0; y < 16; y++) { t.px(0, y, rgb(0x6d5028), 255); t.px(15, y, rgb(0x6d5028), 255); }
+    for (let x = 0; x < 16; x++) t.px(x, 15, rgb(0x6d5028), 255);
+    for (let x = 2; x < 14; x++) { t.px(x, 2, rgb(0x8a6a3c), 255); t.px(x, 13, rgb(0x8a6a3c), 255); }
+    for (let y = 2; y < 14; y++) { t.px(2, y, rgb(0x8a6a3c), 255); t.px(13, y, rgb(0x8a6a3c), 255); }
+    // Poignée : un bouton clair, creusé dans le relief pour attraper la lumière.
+    for (const [hx, hy] of [[12, 8], [12, 9]] as const) { t.px(hx, hy, rgb(0xd9c479), 255); t.pxHeight(hx, hy, 1); }
+  },
+  door_upper: (t, r) => {
+    planks(t, rgb(0xa9814d), r, 6, true);
+    for (let y = 0; y < 16; y++) { t.px(0, y, rgb(0x6d5028), 255); t.px(15, y, rgb(0x6d5028), 255); }
+    for (let x = 0; x < 16; x++) t.px(x, 0, rgb(0x6d5028), 255);
+    for (let y = 3; y < 9; y++)
+      for (let x = 3; x < 13; x++) { t.px(x, y, rgb(0x9fd4e8), 190, 0.9 + r() * 0.2); t.pxHeight(x, y, 0.1); }
+    // Croisillon de la fenêtre.
+    for (let y = 3; y < 9; y++) { t.px(7, y, rgb(0x6d5028), 255); t.pxHeight(7, y, 0.7); }
+    for (let x = 3; x < 13; x++) { t.px(x, 5, rgb(0x6d5028), 255); t.pxHeight(x, 5, 0.7); }
+  },
+
+  // Lit : la tuile du dessus tourne avec l'orientation du bloc, l'oreiller est
+  // donc toujours dessiné du même côté — celui de la tête.
+  bed_head: (t, r) => {
+    grainy(t, rgb(0xa62b2b), r, 0.16, 4);
+    for (let y = 12; y < 16; y++)
+      for (let x = 1; x < 15; x++) { t.px(x, y, rgb(0xe8e4dc), 255, 0.92 + r() * 0.16); t.pxHeight(x, y, 0.9); }
+    for (let x = 1; x < 15; x++) t.px(x, 11, rgb(0x7d1f1f), 255);
+  },
+  bed_foot: (t, r) => {
+    grainy(t, rgb(0xa62b2b), r, 0.16, 4);
+    // Pli du drap, replié sur le pied du lit.
+    for (let x = 1; x < 15; x++) { t.px(x, 3, rgb(0x8d2323), 255); t.pxHeight(x, 3, 0.35); }
+  },
+  bed_side: (t, r) => {
+    grainy(t, rgb(0x9c2828), r, 0.16, 4);
+    // Sommier de bois sous le matelas.
+    for (let y = 12; y < 16; y++)
+      for (let x = 0; x < 16; x++) { t.px(x, y, rgb(0x8a6438), 255, 0.9 + r() * 0.2); t.pxHeight(x, y, 0.4); }
+  },
+
   chest_top: (t, r) => planks(t, rgb(0x9a6a34), r, 10, false),
   chest_side: (t, r) => {
     planks(t, rgb(0x8a5c2c), r, 12, false);

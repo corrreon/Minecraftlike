@@ -82,6 +82,8 @@ export class Player {
   private starveTimer = 0;
 
   autoJump = false;
+  /** En selle : la monture décide de la position, la physique du joueur se tait. */
+  riding = false;
 
   get eyeHeight(): number {
     return this.sneaking ? PLAYER_CROUCH_EYE : PLAYER_EYE;
@@ -125,6 +127,19 @@ export class Player {
       return;
     }
     this.updateEnvironment(world);
+
+    // En selle, la monture pilote : on garde la vitalité et le regard, mais on
+    // ne touche ni à la position ni à la vitesse — le jeu s'en charge.
+    if (this.riding) {
+      this.sneaking = false;
+      this.flying = false;
+      this.sprinting = false;
+      this.fallDistance = 0;
+      this.velocity.set(0, 0, 0);
+      this.bobPhase += dt * 0.9;
+      this.updateVitals(dt, world);
+      return;
+    }
 
     const wantSneak = input.sneak && !this.flying;
     // On ne se relève pas si le plafond est trop bas.
