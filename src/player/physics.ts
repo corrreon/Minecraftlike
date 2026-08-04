@@ -2,7 +2,7 @@
 
 import { Vector3 } from 'three';
 import { WORLD_HEIGHT } from '../core/constants';
-import { IS_SOLID, MAX_Y, MIN_Y, RENDER_KIND, RenderKind } from '../world/blocks';
+import { IS_SOLID, MAX_BOXES, SHAPE_BOXES, SHAPE_COUNT, RENDER_KIND, RenderKind } from '../world/blocks';
 import type { World } from '../world/World';
 
 export interface Box {
@@ -41,20 +41,28 @@ function overlaps(world: World, b: Box): boolean {
         if (id < 0) return true; // chunk non chargé : mur invisible
         if (!IS_SOLID[id]) continue;
         // Les dalles n'occupent qu'une partie de leur voxel.
-        if (b.y < y + MAX_Y[id] && top > y + MIN_Y[id]) return true;
+        // Un escalier est fait de deux boîtes : il faut les tester toutes,
+        // sinon on traverse la marche haute.
+        const n = SHAPE_COUNT[id];
+        for (let k = 0; k < n && k < MAX_BOXES; k++) {
+          const o = (id * MAX_BOXES + k) * 6;
+          if (b.x + b.width / 2 <= x + SHAPE_BOXES[o] || b.x - b.width / 2 >= x + SHAPE_BOXES[o + 3]) continue;
+          if (b.z + b.width / 2 <= z + SHAPE_BOXES[o + 2] || b.z - b.width / 2 >= z + SHAPE_BOXES[o + 5]) continue;
+          if (b.y < y + SHAPE_BOXES[o + 4] && top > y + SHAPE_BOXES[o + 1]) return true;
+        }
       }
     }
   }
   return false;
 }
 
-const MAX_STEP = 1.0;
-
 /**
  * Déplace la boîte en résolvant les collisions axe par axe.
  * `velocity` est modifié : les composantes bloquées sont annulées.
+ * `maxStep` est la hauteur du ressaut franchissable sans sauter : 0 pour
+ * aucun, 0.55 pour les dalles et les escaliers, 1 pour le saut automatique.
  */
-export function moveBox(world: World, box: Box, velocity: Vector3, dt: number, stepUp = false): MoveResult {
+export function moveBox(world: World, box: Box, velocity: Vector3, dt: number, maxStep = 0): MoveResult {
   const res: MoveResult = { onGround: false, hitX: false, hitY: false, hitZ: false, stepped: 0 };
 
   // Sous-pas pour éviter de traverser un bloc à grande vitesse.
@@ -94,9 +102,9 @@ export function moveBox(world: World, box: Box, velocity: Vector3, dt: number, s
       if (overlaps(world, box)) {
         box.x -= dx;
         let resolved = false;
-        if (stepUp && res.onGround) {
+        if (maxStep > 0 && res.onGround) {
           const oldY = box.y;
-          for (let h = 0.25; h <= MAX_STEP + 1e-6; h += 0.25) {
+          for (let h = 0.25; h <= maxStep + 1e-6; h += 0.25) {
             box.y = oldY + h;
             box.x += dx;
             if (!overlaps(world, box)) { resolved = true; res.stepped = h; break; }
@@ -118,9 +126,9 @@ export function moveBox(world: World, box: Box, velocity: Vector3, dt: number, s
       if (overlaps(world, box)) {
         box.z -= dz;
         let resolved = false;
-        if (stepUp && res.onGround) {
+        if (maxStep > 0 && res.onGround) {
           const oldY = box.y;
-          for (let h = 0.25; h <= MAX_STEP + 1e-6; h += 0.25) {
+          for (let h = 0.25; h <= maxStep + 1e-6; h += 0.25) {
             box.y = oldY + h;
             box.z += dz;
             if (!overlaps(world, box)) { resolved = true; res.stepped = Math.max(res.stepped, h); break; }

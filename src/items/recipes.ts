@@ -121,6 +121,20 @@ for (const [full, slab] of SLAB_RECIPES) {
   RECIPES.push(shaped(['S', 'S'], { S: slab }, full));
 }
 
+// --- Escaliers : six blocs en gradins donnent quatre marches ---------------
+const STAIR_RECIPES: [string, string][] = [
+  ['cobblestone', 'cobblestone_stairs'],
+  ['stone_bricks', 'stone_brick_stairs'],
+  ['sandstone', 'sandstone_stairs'],
+  ['bricks', 'brick_stairs'],
+  ['oak_planks', 'oak_stairs'],
+  ['spruce_planks', 'spruce_stairs'],
+];
+for (const [full, stairs] of STAIR_RECIPES) {
+  RECIPES.push(shaped(['M  ', 'MM ', 'MMM'], { M: full }, stairs, 4));
+  RECIPES.push(shaped(['  M', ' MM', 'MMM'], { M: full }, stairs, 4));
+}
+
 // --- Palette de construction ----------------------------------------------
 RECIPES.push(shaped(['SS', 'SS'], { S: 'smooth_stone' }, 'quartz_block'));
 RECIPES.push(shaped(['GG', 'GG'], { G: 'granite' }, 'polished_granite', 4));

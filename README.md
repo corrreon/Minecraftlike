@@ -45,11 +45,12 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   et **coffres au trésor** enfouis sous les plages. Chaque chunk reconstruit
   intégralement la structure qui le touche et découpe ce qui dépasse : aucune
   couture quand on arrive par le bord.
-- **~192 blocs** : roches et variantes polies, minerais, quatre essences de
+- **~210 blocs** : roches et variantes polies, minerais, quatre essences de
   bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
   lumière, matériaux du Nether et de l'End, et une palette de construction
   complète — laine, **béton**, **terre cuite** et **verre teinté** dans les
-  16 teintes, plus **10 familles de dalles**.
+  16 teintes, plus **10 familles de dalles** et **6 familles d'escaliers**
+  orientés selon le regard à la pose.
 - **Trois types de monde** au choix à la création : normal, **superplat** pour
   bâtir sans terrain qui gêne, et **oneblock**.
 
@@ -130,8 +131,9 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **110 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
-  de la laine, TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
+  **165 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
+  TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
   lingots d'or donnent un lingot, et l'équipement en diamant s'améliore.
@@ -255,10 +257,13 @@ Quelques points de conception :
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
 - Les fluides ne s'écoulent pas ; l'eau et la lave sont statiques.
-- Les dalles sont le seul bloc non cubique : escaliers, murets et clôtures
-  demanderaient au mailleur de gérer des formes composées de plusieurs boîtes.
-- Le lancer de rayon vise le voxel entier : on peut cibler une dalle en visant
-  sa moitié vide.
+- Les formes non cubiques se limitent à deux boîtes par bloc : dalles et
+  escaliers passent, mais un muret ou une clôture, qui en demandent plus,
+  restent hors de portée du mailleur.
+- Les escaliers ne se posent qu'à l'endroit : les variantes retournées sous un
+  plafond coûteraient 24 identifiants de bloc de plus.
+- Le lancer de rayon vise le voxel entier : on peut cibler une dalle ou la
+  moitié creuse d'un escalier en visant du vide.
 - Une seule cascade d'ombre : au-delà du rayon couvert (48 à 110 blocs selon la
   distance de rendu), les ombres s'estompent au lieu de se prolonger.
 - La lumière de bloc est monochrome : une torche et une lanterne aquatique

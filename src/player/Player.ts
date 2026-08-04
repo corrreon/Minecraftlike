@@ -175,7 +175,11 @@ export class Player {
     } else {
       const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: PLAYER_WIDTH, height: this.height };
       const before = this.position.y;
-      const res = moveBox(world, box, this.velocity, dt, this.autoJump && this.onGround && !this.flying);
+      // On gravit toujours un demi-bloc sans sauter, sinon les dalles et les
+      // escaliers seraient des murs ; le saut automatique étend le ressaut au
+      // bloc entier.
+      const step = this.onGround && !this.flying ? (this.autoJump ? 1 : 0.55) : 0;
+      const res = moveBox(world, box, this.velocity, dt, step);
       // Le mode accroupi empêche de tomber d'un rebord.
       if (this.sneaking && this.onGround && !res.onGround) {
         const test: Box = { ...box, x: this.position.x, y: box.y };

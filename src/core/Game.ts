@@ -1674,6 +1674,17 @@ export class Game {
       if (upper) placeId = BLOCK_BY_KEY.get(`${placeDef.key}_top`)?.id ?? placeId;
     }
 
+    // Un escalier se tourne selon le regard : la marche haute est du côté où
+    // l'on regarde, de sorte qu'on gravit dans le sens où l'on avance.
+    if (placeDef.key.endsWith('_stairs_north')) {
+      const f = this.player.forward;
+      const facing = Math.abs(f.x) > Math.abs(f.z)
+        ? (f.x > 0 ? 'east' : 'west')
+        : (f.z > 0 ? 'south' : 'north');
+      const base = placeDef.key.slice(0, -'_north'.length);
+      placeId = BLOCK_BY_KEY.get(`${base}_${facing}`)?.id ?? placeId;
+    }
+
     this.setBlock(nx, ny, nz, placeId);
     this.audio.place(blockDef(placeId).sound as SoundGroup);
     this.heldView.swing = 1;

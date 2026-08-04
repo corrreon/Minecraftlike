@@ -602,7 +602,7 @@ export class Mob {
     }
 
     const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: d.width, height: d.height };
-    const res = moveBox(world, box, this.velocity, dt, false);
+    const res = moveBox(world, box, this.velocity, dt, 0.55);
     // Franchit les marches d'un bloc.
     if ((res.hitX || res.hitZ) && res.onGround && this.jumpCooldown <= 0 && !d.hops && !d.flies) {
       this.velocity.y = 7.2;
@@ -787,7 +787,7 @@ export class ItemEntity {
 
     this.velocity.y -= GRAVITY * 0.7 * dt;
     const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: 0.28, height: 0.28 };
-    const res = moveBox(world, box, this.velocity, dt, false);
+    const res = moveBox(world, box, this.velocity, dt, 0);
     this.position.set(box.x, box.y, box.z);
     if (res.onGround) {
       this.velocity.x *= Math.pow(0.02, dt);

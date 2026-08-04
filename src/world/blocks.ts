@@ -77,7 +77,16 @@ export interface BlockDef {
   /** Emprise verticale du bloc, en fraction de voxel. Une dalle vaut 0→0,5. */
   minY: number;
   maxY: number;
+  /**
+   * Découpage du bloc en boîtes, en fraction de voxel, quand une seule ne
+   * suffit pas : un escalier en demande deux. Vide pour un cube ou une dalle,
+   * que `minY`/`maxY` décrivent déjà.
+   */
+  boxes?: Box[];
 }
+
+/** Boîte élémentaire d'une forme, en fraction de voxel. */
+export type Box = readonly [number, number, number, number, number, number];
 
 const TEXTURE_ORDER: string[] = [];
 const TEXTURE_INDEX = new Map<string, number>();
@@ -118,6 +127,7 @@ interface BlockOptions {
   flammable?: boolean;
   minY?: number;
   maxY?: number;
+  boxes?: Box[];
 }
 
 function define(key: string, o: BlockOptions): BlockDef {
@@ -157,6 +167,7 @@ function define(key: string, o: BlockOptions): BlockDef {
     flammable: o.flammable ?? false,
     minY: o.minY ?? 0,
     maxY: o.maxY ?? 1,
+    boxes: o.boxes,
     textures: t,
     layers: { top: tex(t.top), bottom: tex(t.bottom), side: tex(t.side) },
   };
@@ -544,6 +555,59 @@ for (const [key, name, texture] of SLAB_MATERIALS) {
 }
 
 // ---------------------------------------------------------------------------
+// Escaliers
+// ---------------------------------------------------------------------------
+
+/**
+ * Un escalier est fait de deux boîtes : une dalle basse qui couvre tout le
+ * voxel, et une demi-marche posée dessus, du côté haut. `facing` désigne ce
+ * côté haut — celui contre lequel on bute et qu'on gravit.
+ *
+ * Quatre orientations suffisent ; on renonce aux escaliers retournés, qui
+ * doubleraient le nombre d'identifiants pour un usage nettement plus rare.
+ */
+export const STAIR_FACINGS = ['north', 'south', 'west', 'east'] as const;
+export type StairFacing = (typeof STAIR_FACINGS)[number];
+
+/** Demi-marche haute, selon le côté relevé. */
+const STEP_BOX: Record<StairFacing, Box> = {
+  north: [0, 0.5, 0, 1, 1, 0.5],
+  south: [0, 0.5, 0.5, 1, 1, 1],
+  west: [0, 0.5, 0, 0.5, 1, 1],
+  east: [0.5, 0.5, 0, 1, 1, 1],
+};
+
+export const STAIR_MATERIALS: readonly (readonly [string, string, string])[] = [
+  ['cobblestone', 'de pierre taillée', 'cobblestone'],
+  ['stone_brick', 'de pierre sculptée', 'stone_bricks'],
+  ['sandstone', 'de grès', 'sandstone'],
+  ['brick', 'de briques', 'bricks'],
+  ['oak', 'de chêne', 'oak_planks'],
+  ['spruce', 'de sapin', 'spruce_planks'],
+];
+
+for (const [key, name, texture] of STAIR_MATERIALS) {
+  const wood = key === 'oak' || key === 'spruce';
+  for (const facing of STAIR_FACINGS) {
+    define(`${key}_stairs_${facing}`, {
+      name: `Escalier ${name}`,
+      textures: texture,
+      // Comme la dalle : ne masque pas les faces voisines, mais arrête la lumière.
+      opaque: false,
+      lightFilter: 15,
+      hardness: 2,
+      tool: wood ? 'axe' : 'pickaxe',
+      needsTool: !wood,
+      sound: wood ? 'wood' : 'stone',
+      flammable: wood,
+      // Une seule clé d'objet pour les quatre orientations.
+      drop: `${key}_stairs`,
+      boxes: [[0, 0, 0, 1, 0.5, 1], STEP_BOX[facing]],
+    });
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Nether et End
 // ---------------------------------------------------------------------------
 
@@ -633,8 +697,13 @@ export const TINTS = new Uint32Array(BLOCK_COUNT);
 /** Emprise verticale : 1 quand le bloc remplit son voxel. */
 export const MIN_Y = new Float32Array(BLOCK_COUNT);
 export const MAX_Y = new Float32Array(BLOCK_COUNT);
-/** Le bloc n'occupe pas tout son voxel (dalle) : géométrie et collision à part. */
+/** Le bloc n'occupe pas tout son voxel : géométrie et collision à part. */
 export const IS_PARTIAL = new Uint8Array(BLOCK_COUNT);
+/** Nombre de boîtes composant le bloc (1 pour un cube ou une dalle, 2 pour un escalier). */
+export const SHAPE_COUNT = new Uint8Array(BLOCK_COUNT);
+/** Boîtes aplaties : six flottants par boîte, deux boîtes par bloc au plus. */
+export const MAX_BOXES = 2;
+export const SHAPE_BOXES = new Float32Array(BLOCK_COUNT * MAX_BOXES * 6);
 /** [top, bottom, side] aplatis par identifiant de bloc. */
 export const TEX_LAYERS = new Uint16Array(BLOCK_COUNT * 3);
 
@@ -650,7 +719,12 @@ for (const b of BLOCKS) {
   TINTS[b.id] = b.tint;
   MIN_Y[b.id] = b.minY;
   MAX_Y[b.id] = b.maxY;
-  IS_PARTIAL[b.id] = b.minY > 0 || b.maxY < 1 ? 1 : 0;
+  const boxes: Box[] = b.boxes ?? [[0, b.minY, 0, 1, b.maxY, 1]];
+  SHAPE_COUNT[b.id] = boxes.length;
+  for (let k = 0; k < boxes.length && k < MAX_BOXES; k++) {
+    SHAPE_BOXES.set(boxes[k], (b.id * MAX_BOXES + k) * 6);
+  }
+  IS_PARTIAL[b.id] = b.boxes !== undefined || b.minY > 0 || b.maxY < 1 ? 1 : 0;
   TEX_LAYERS[b.id * 3 + 0] = b.layers.top;
   TEX_LAYERS[b.id * 3 + 1] = b.layers.bottom;
   TEX_LAYERS[b.id * 3 + 2] = b.layers.side;

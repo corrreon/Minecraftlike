@@ -4,7 +4,7 @@
  * objets qui n'existent pas sous forme de bloc.
  */
 
-import { BLOCKS, BLOCK_BY_KEY, RenderKind, type ToolKind } from '../world/blocks';
+import { BLOCKS, BLOCK_BY_KEY, STAIR_FACINGS, STAIR_MATERIALS, RenderKind, type ToolKind } from '../world/blocks';
 
 export interface ToolStats {
   kind: ToolKind;
@@ -89,9 +89,11 @@ for (const b of BLOCKS) {
   if (b.key === 'bedrock') continue;
   // `_slab_top` n'est qu'une variante de pose : un seul objet par matériau.
   if (b.key.endsWith('_slab_top')) continue;
-  // L'œuf de dragon est enregistré tout en bas du fichier : les identifiants
-  // d'objets sont écrits dans les sauvegardes, on n'insère jamais au milieu.
+  // L'œuf de dragon et les escaliers sont enregistrés tout en bas du fichier :
+  // les identifiants d'objets sont écrits dans les sauvegardes, on n'insère
+  // jamais au milieu.
   if (b.key === 'dragon_egg') continue;
+  if (b.key.includes('_stairs_')) continue;
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -256,6 +258,21 @@ item('dragon_egg', {
   name: 'Œuf de dragon', maxStack: 1, block: BLOCK_BY_KEY.get('dragon_egg')!.id,
   icon: 'block', color: 0x6a3a9a,
 });
+
+// Un seul objet par matériau d'escalier : l'orientation est choisie à la pose.
+// Les quatre variantes pointent vers ce même objet, pour que « prendre le bloc
+// visé » et le butin retombent dessus quelle que soit la marche cassée.
+for (const [key, name] of STAIR_MATERIALS) {
+  const north = BLOCK_BY_KEY.get(`${key}_stairs_north`)!;
+  const def = item(`${key}_stairs`, {
+    name: `Escalier ${name}`,
+    block: north.id,
+    icon: 'block',
+  });
+  for (const facing of STAIR_FACINGS) {
+    ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`${key}_stairs_${facing}`)!.id, def);
+  }
+}
 
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];

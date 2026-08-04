@@ -11,7 +11,7 @@
  */
 
 import { CHUNK_X, CHUNK_Z, WORLD_HEIGHT } from '../core/constants';
-import { IS_OPAQUE, IS_PARTIAL, MAX_Y, MIN_Y, RENDER_KIND, RENDER_LAYER, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
+import { IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
 
 export const PAD = 1;
 export const PX = CHUNK_X + 2 * PAD;
@@ -517,59 +517,72 @@ function emitPartials(blocks: Uint8Array, light: Uint8Array, builders: LayerBuil
         const id = blocks[paddedIndex(x, y, z)];
         if (id === 0 || !IS_PARTIAL[id]) continue;
 
-        const y0 = y + MIN_Y[id];
-        const y1 = y + MAX_Y[id];
         const tint = TINTS[id] || 0xffffff;
         const r = (tint >> 16) & 255, g = (tint >> 8) & 255, b = tint & 255;
         const out = builders[RENDER_LAYER[id]];
-        const height = MAX_Y[id] - MIN_Y[id];
+        const nBoxes = SHAPE_COUNT[id];
 
-        // [normale, texture, cullé si le voisin est opaque et couvre la face]
-        const faces: [number, number, number, number, boolean][] = [
-          [0, 1, 0, TEX_LAYERS[id * 3 + 0], MAX_Y[id] >= 1 && IS_OPAQUE[getBlock(x, y + 1, z)] === 1],
-          [0, -1, 0, TEX_LAYERS[id * 3 + 1], MIN_Y[id] <= 0 && IS_OPAQUE[getBlock(x, y - 1, z)] === 1],
-          [0, 0, 1, TEX_LAYERS[id * 3 + 2], IS_OPAQUE[getBlock(x, y, z + 1)] === 1 || getBlock(x, y, z + 1) === id],
-          [0, 0, -1, TEX_LAYERS[id * 3 + 2], IS_OPAQUE[getBlock(x, y, z - 1)] === 1 || getBlock(x, y, z - 1) === id],
-          [1, 0, 0, TEX_LAYERS[id * 3 + 2], IS_OPAQUE[getBlock(x + 1, y, z)] === 1 || getBlock(x + 1, y, z) === id],
-          [-1, 0, 0, TEX_LAYERS[id * 3 + 2], IS_OPAQUE[getBlock(x - 1, y, z)] === 1 || getBlock(x - 1, y, z) === id],
-        ];
+        for (let k = 0; k < nBoxes && k < MAX_BOXES; k++) {
+          const o = (id * MAX_BOXES + k) * 6;
+          const bx0 = SHAPE_BOXES[o], by0 = SHAPE_BOXES[o + 1], bz0 = SHAPE_BOXES[o + 2];
+          const bx1 = SHAPE_BOXES[o + 3], by1 = SHAPE_BOXES[o + 4], bz1 = SHAPE_BOXES[o + 5];
+          const x0 = x + bx0, x1 = x + bx1;
+          const y0 = y + by0, y1 = y + by1;
+          const z0 = z + bz0, z1 = z + bz1;
 
-        for (const [nx, ny, nz, tex, culled] of faces) {
-          if (culled) continue;
-          const l = getLight(x + nx, y + (ny > 0 ? 1 : ny < 0 ? -1 : 0), z + nz);
-          const sky = l >> 4;
-          const blk = l & 15;
-          const packed = tex | (3 << 9) | (sky << 11) | (blk << 15);
+          // Une face n'est masquée que si la boîte touche le bord du voxel et
+          // que le voisin de ce côté est plein. Une boîte qui s'arrête au
+          // milieu du cube montre toujours ses flancs — c'est ce qui donne à
+          // l'escalier sa marche.
+          const faces: [number, number, number, number, boolean][] = [
+            [0, 1, 0, TEX_LAYERS[id * 3 + 0], by1 >= 1 && IS_OPAQUE[getBlock(x, y + 1, z)] === 1],
+            [0, -1, 0, TEX_LAYERS[id * 3 + 1], by0 <= 0 && IS_OPAQUE[getBlock(x, y - 1, z)] === 1],
+            [0, 0, 1, TEX_LAYERS[id * 3 + 2], bz1 >= 1 && (IS_OPAQUE[getBlock(x, y, z + 1)] === 1 || getBlock(x, y, z + 1) === id)],
+            [0, 0, -1, TEX_LAYERS[id * 3 + 2], bz0 <= 0 && (IS_OPAQUE[getBlock(x, y, z - 1)] === 1 || getBlock(x, y, z - 1) === id)],
+            [1, 0, 0, TEX_LAYERS[id * 3 + 2], bx1 >= 1 && (IS_OPAQUE[getBlock(x + 1, y, z)] === 1 || getBlock(x + 1, y, z) === id)],
+            [-1, 0, 0, TEX_LAYERS[id * 3 + 2], bx0 <= 0 && (IS_OPAQUE[getBlock(x - 1, y, z)] === 1 || getBlock(x - 1, y, z) === id)],
+          ];
 
-          const P = BOX_POS;
-          if (ny !== 0) {
-            const py = ny > 0 ? y1 : y0;
-            P[0] = x; P[1] = py; P[2] = z;
-            P[3] = x + 1; P[4] = py; P[5] = z;
-            P[6] = x + 1; P[7] = py; P[8] = z + 1;
-            P[9] = x; P[10] = py; P[11] = z + 1;
-          } else if (nx !== 0) {
-            const px = nx > 0 ? x + 1 : x;
-            P[0] = px; P[1] = y0; P[2] = z;
-            P[3] = px; P[4] = y0; P[5] = z + 1;
-            P[6] = px; P[7] = y1; P[8] = z + 1;
-            P[9] = px; P[10] = y1; P[11] = z;
-          } else {
-            const pz = nz > 0 ? z + 1 : z;
-            P[0] = x; P[1] = y0; P[2] = pz;
-            P[3] = x + 1; P[4] = y0; P[5] = pz;
-            P[6] = x + 1; P[7] = y1; P[8] = pz;
-            P[9] = x; P[10] = y1; P[11] = pz;
+          for (const [nx, ny, nz, tex, culled] of faces) {
+            if (culled) continue;
+            const l = getLight(x + nx, y + (ny > 0 ? 1 : ny < 0 ? -1 : 0), z + nz);
+            const sky = l >> 4;
+            const blk = l & 15;
+            const packed = tex | (3 << 9) | (sky << 11) | (blk << 15);
+
+            const P = BOX_POS;
+            if (ny !== 0) {
+              const py = ny > 0 ? y1 : y0;
+              P[0] = x0; P[1] = py; P[2] = z0;
+              P[3] = x1; P[4] = py; P[5] = z0;
+              P[6] = x1; P[7] = py; P[8] = z1;
+              P[9] = x0; P[10] = py; P[11] = z1;
+            } else if (nx !== 0) {
+              const px = nx > 0 ? x1 : x0;
+              P[0] = px; P[1] = y0; P[2] = z0;
+              P[3] = px; P[4] = y0; P[5] = z1;
+              P[6] = px; P[7] = y1; P[8] = z1;
+              P[9] = px; P[10] = y1; P[11] = z0;
+            } else {
+              const pz = nz > 0 ? z1 : z0;
+              P[0] = x0; P[1] = y0; P[2] = pz;
+              P[3] = x1; P[4] = y0; P[5] = pz;
+              P[6] = x1; P[7] = y1; P[8] = pz;
+              P[9] = x0; P[10] = y1; P[11] = pz;
+            }
+
+            // Les UV suivent l'emprise réelle de la boîte : une demi-marche ne
+            // doit pas étirer la texture sur un bloc entier.
+            const U = BOX_UV;
+            const uw = ny !== 0 ? bx1 - bx0 : nx !== 0 ? bz1 - bz0 : bx1 - bx0;
+            const vh = ny !== 0 ? bz1 - bz0 : by1 - by0;
+            U[0] = 0; U[1] = 0; U[2] = uw; U[3] = 0; U[4] = uw; U[5] = vh; U[6] = 0; U[7] = vh;
+
+            // Les quatre sommets tournent dans le sens direct vu de la normale ;
+            // trois des six faces demandent l'ordre inverse.
+            const reverse = ny < 0 || nx < 0 || nz < 0;
+            out.quad(P, nx * 127, ny * 127, nz * 127, U, r, g, b, packed, packed, packed, packed, reverse, false);
           }
-
-          const U = BOX_UV;
-          const vh = ny !== 0 ? 1 : height;
-          U[0] = 0; U[1] = 0; U[2] = 1; U[3] = 0; U[4] = 1; U[5] = vh; U[6] = 0; U[7] = vh;
-
-          // Les quatre sommets tournent dans le sens direct vu de la normale ;
-          // trois des six faces demandent l'ordre inverse.
-          const reverse = ny < 0 || nx < 0 || nz < 0;
-          out.quad(P, nx * 127, ny * 127, nz * 127, U, r, g, b, packed, packed, packed, packed, reverse, false);
         }
       }
     }
