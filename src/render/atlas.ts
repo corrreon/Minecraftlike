@@ -643,6 +643,48 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
     for (let x = 3; x < 13; x++) { t.px(x, 5, rgb(0x6d5028), 255); t.pxHeight(x, 5, 0.7); }
   },
 
+  // Trappe : un cadre de planches cloué, avec un jour entre les lattes.
+  trapdoor: (t, r) => {
+    t.clear();
+    const bois = rgb(0x9a7440);
+    const cadre = rgb(0x6d5028);
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        // Deux fentes verticales laissent passer le jour.
+        if (x === 5 || x === 10) continue;
+        const bord = x === 0 || x === 15 || y === 0 || y === 15;
+        t.px(x, y, bord ? cadre : bois, 255, 0.88 + r() * 0.22);
+        t.pxHeight(x, y, bord ? 0.5 : 0.8);
+      }
+    }
+    for (const [hx, hy] of [[13, 7], [13, 8]] as const) { t.px(hx, hy, rgb(0x4a4a52), 255); t.pxHeight(hx, hy, 1); }
+  },
+
+  // Lucky bloc : une caisse dorée frappée d'un point d'interrogation.
+  lucky_block: (t, r) => {
+    grainy(t, rgb(0xe0b423), r, 0.14, 4);
+    for (let i = 0; i < 16; i++) {
+      t.px(i, 0, rgb(0xa8850f), 255); t.px(i, 15, rgb(0xa8850f), 255);
+      t.px(0, i, rgb(0xa8850f), 255); t.px(15, i, rgb(0xa8850f), 255);
+    }
+    const marque = [
+      [5, 3], [6, 3], [7, 3], [8, 3], [9, 3],
+      [10, 4], [10, 5], [9, 6], [8, 7], [7, 8], [7, 9],
+      [7, 11], [7, 12],
+    ];
+    for (const [x, y] of marque) { t.px(x, y, rgb(0x3a2c06), 255); t.pxHeight(x, y, 0.15); }
+  },
+
+  // Carottes : fanes vertes et racines orange qui pointent.
+  carrots: (t, r) => {
+    t.clear();
+    plant(t, rgb(0x3f7a2a), r, 7, 13);
+    for (const x of [4, 8, 11]) {
+      for (let y = 12; y < 15; y++) { t.px(x, y, rgb(0xe07818), 255, 0.9 + r() * 0.2); t.pxHeight(x, y, 0.7); }
+      t.px(x, 15, rgb(0xb85a10), 255);
+    }
+  },
+
   // Échelle : deux montants et des barreaux, le reste transparent — c'est ce
   // vide qui la distingue d'une planche vue de loin.
   ladder: (t, r) => {

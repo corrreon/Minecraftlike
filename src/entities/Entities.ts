@@ -433,6 +433,8 @@ export class Mob {
   threat: Mob | null = null;
   /** Phase de rebond, pour les créatures qui sautillent. */
   private hopTimer = 0;
+  /** Mouton déjà tondu : il ne rendra plus de laine. */
+  shorn = false;
   /** Montée par le joueur : elle obéit aux commandes plutôt qu'à son IA. */
   ridden = false;
   /** Commande du cavalier : direction souhaitée dans le repère du monde, et saut. */

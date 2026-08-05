@@ -190,6 +190,17 @@ RECIPES.push(shaped(['SPS', 'SPS'], { S: 'stick', P: PLANKS }, 'oak_fence_gate')
 // le lit est rouge quoi qu'il arrive.
 RECIPES.push(shaped(['WWW', 'PPP'], { W: WOOL, P: PLANKS }, 'red_bed'));
 
+// Barrière et trappe, comme la porte : du bois et rien d'autre.
+RECIPES.push(shaped(['PSP', 'PSP'], { P: PLANKS, S: 'stick' }, 'oak_fence', 3));
+RECIPES.push(shaped(['PPP', 'PPP'], { P: PLANKS }, 'oak_trapdoor', 2));
+
+// Les deux dorures : huit lingots d'or autour du fruit ou du légume.
+RECIPES.push(shaped(['GGG', 'GAG', 'GGG'], { G: 'gold_ingot', A: 'apple' }, 'golden_apple'));
+RECIPES.push(shaped(['GGG', 'GCG', 'GGG'], { G: 'gold_ingot', C: 'carrot' }, 'golden_carrot'));
+
+// Le lucky bloc : de l'or autour d'une caisse, et on tente sa chance.
+RECIPES.push(shaped(['GGG', 'GCG', 'GGG'], { G: 'gold_ingot', C: 'chest' }, 'lucky_block'));
+
 // Sept bâtons en échelle donnent trois échelons.
 RECIPES.push(shaped(['S S', 'SSS', 'S S'], { S: 'stick' }, 'ladder', 3));
 

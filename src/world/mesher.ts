@@ -11,7 +11,7 @@
  */
 
 import { CHUNK_X, CHUNK_Z, WORLD_HEIGHT } from '../core/constants';
-import { IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, ROT_TOP, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
+import { IS_GATE, IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, ROT_TOP, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
 
 export const PAD = 1;
 export const PX = CHUNK_X + 2 * PAD;
@@ -494,6 +494,98 @@ const BOX_UV = new Float32Array(8);
 const ROT_UV = new Float32Array(8);
 
 /**
+ * Émet les six faces d'une boîte libre, sans masquage ni fusion.
+ *
+ * Sert aux formes dont la géométrie ne tient pas dans la table des blocs
+ * parce qu'elle dépend du voisinage : une barrière n'a pas la même silhouette
+ * selon les côtés auxquels elle se raccorde. Les seize combinaisons auraient
+ * coûté seize identifiants de bloc par matériau, alors qu'il n'en reste
+ * qu'une poignée.
+ */
+function emitFreeBox(
+  out: LayerBuilder,
+  x0: number, y0: number, z0: number,
+  x1: number, y1: number, z1: number,
+  texTop: number, texSide: number,
+  packed: number,
+  r: number, g: number, b: number,
+): void {
+  const faces: [number, number, number, number][] = [
+    [0, 1, 0, texTop],
+    [0, -1, 0, texTop],
+    [0, 0, 1, texSide],
+    [0, 0, -1, texSide],
+    [1, 0, 0, texSide],
+    [-1, 0, 0, texSide],
+  ];
+  for (const [nx, ny, nz, tex] of faces) {
+    const P = BOX_POS;
+    if (ny !== 0) {
+      const py = ny > 0 ? y1 : y0;
+      P[0] = x0; P[1] = py; P[2] = z0;
+      P[3] = x1; P[4] = py; P[5] = z0;
+      P[6] = x1; P[7] = py; P[8] = z1;
+      P[9] = x0; P[10] = py; P[11] = z1;
+    } else if (nx !== 0) {
+      const px = nx > 0 ? x1 : x0;
+      P[0] = px; P[1] = y0; P[2] = z0;
+      P[3] = px; P[4] = y0; P[5] = z1;
+      P[6] = px; P[7] = y1; P[8] = z1;
+      P[9] = px; P[10] = y1; P[11] = z0;
+    } else {
+      const pz = nz > 0 ? z1 : z0;
+      P[0] = x0; P[1] = y0; P[2] = pz;
+      P[3] = x1; P[4] = y0; P[5] = pz;
+      P[6] = x1; P[7] = y1; P[8] = pz;
+      P[9] = x0; P[10] = y1; P[11] = pz;
+    }
+    const U = BOX_UV;
+    const uw = ny !== 0 ? x1 - x0 : nx !== 0 ? z1 - z0 : x1 - x0;
+    const vh = ny !== 0 ? z1 - z0 : y1 - y0;
+    U[0] = 0; U[1] = 0; U[2] = uw; U[3] = 0; U[4] = uw; U[5] = vh; U[6] = 0; U[7] = vh;
+    const reverse = ny !== 0 ? ny > 0 : nx !== 0 ? nx > 0 : nz < 0;
+    out.quad(P, nx * 127, ny * 127, nz * 127, U, r, g, b, packed | tex, packed | tex, packed | tex, packed | tex, reverse, false);
+  }
+}
+
+/** Une barrière se raccorde à un bloc plein, à une autre barrière ou à un portillon. */
+export function fenceConnects(id: number): boolean {
+  if (id <= 0) return false;
+  return IS_OPAQUE[id] === 1 || RENDER_KIND[id] === RenderKind.Fence || IS_GATE[id] === 1;
+}
+
+/** Poteau central, et deux lisses vers chaque côté raccordé. */
+function emitFence(
+  id: number, x: number, y: number, z: number,
+  getBlock: (x: number, y: number, z: number) => number,
+  getLight: (x: number, y: number, z: number) => number,
+  out: LayerBuilder,
+): void {
+  const tint = TINTS[id] || 0xffffff;
+  const r = (tint >> 16) & 255, g = (tint >> 8) & 255, b = tint & 255;
+  const l = getLight(x, y, z) || getLight(x, y + 1, z);
+  const packed = (3 << 9) | ((l >> 4) << 11) | ((l & 15) << 15);
+  const texTop = TEX_LAYERS[id * 3 + 0];
+  const texSide = TEX_LAYERS[id * 3 + 2];
+
+  // Poteau.
+  emitFreeBox(out, x + 0.375, y, z + 0.375, x + 0.625, y + 1, z + 0.625, texTop, texSide, packed, r, g, b);
+
+  // Lisses : deux barres horizontales par côté raccordé.
+  const cotes: [number, number][] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+  for (const [dx, dz] of cotes) {
+    if (!fenceConnects(getBlock(x + dx, y, z + dz))) continue;
+    for (const [ry0, ry1] of [[0.3, 0.45], [0.6, 0.75]] as const) {
+      const x0 = dx < 0 ? x : dx > 0 ? x + 0.625 : x + 0.4375;
+      const x1 = dx < 0 ? x + 0.375 : dx > 0 ? x + 1 : x + 0.5625;
+      const z0 = dz < 0 ? z : dz > 0 ? z + 0.625 : z + 0.4375;
+      const z1 = dz < 0 ? z + 0.375 : dz > 0 ? z + 1 : z + 0.5625;
+      emitFreeBox(out, x0, y + ry0, z0, x1, y + ry1, z1, texTop, texSide, packed, r, g, b);
+    }
+  }
+}
+
+/**
  * Émet la géométrie des blocs qui ne remplissent pas leur voxel — pour
  * l'instant les dalles, dont seule l'emprise verticale diffère.
  *
@@ -516,7 +608,12 @@ function emitPartials(blocks: Uint8Array, light: Uint8Array, builders: LayerBuil
     for (let z = 0; z < CHUNK_Z; z++) {
       for (let x = 0; x < CHUNK_X; x++) {
         const id = blocks[paddedIndex(x, y, z)];
-        if (id === 0 || !IS_PARTIAL[id]) continue;
+        if (id === 0) continue;
+        if (RENDER_KIND[id] === RenderKind.Fence) {
+          emitFence(id, x, y, z, getBlock, getLight, builders[RENDER_LAYER[id]]);
+          continue;
+        }
+        if (!IS_PARTIAL[id]) continue;
 
         const tint = TINTS[id] || 0xffffff;
         const r = (tint >> 16) & 255, g = (tint >> 8) & 255, b = tint & 255;

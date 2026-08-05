@@ -96,6 +96,8 @@ for (const b of BLOCKS) {
   if (b.key.includes('_stairs_')) continue;
   if (b.key.startsWith('oak_door_') || b.key.startsWith('oak_fence_gate_') || b.key.startsWith('red_bed_')) continue;
   if (b.key.startsWith('ladder_')) continue;
+  if (b.key.startsWith('oak_trapdoor_')) continue;
+  if (b.key === 'carrots') continue; // l'objet est la carotte, pas le plant
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -311,7 +313,24 @@ for (const [key, name] of STAIR_MATERIALS) {
   for (const facing of FACINGS) {
     ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`ladder_${facing}`)!.id, ladder);
   }
+
+  const trapdoor = item('oak_trapdoor', {
+    name: 'Trappe de chêne', block: BLOCK_BY_KEY.get('oak_trapdoor_closed')!.id, icon: 'block', fuel: 10,
+  });
+  for (const facing of FACINGS) {
+    ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`oak_trapdoor_open_${facing}`)!.id, trapdoor);
+  }
 }
+
+// Carottes : le plant n'a pas d'objet, c'est la racine qu'on ramasse et
+// qu'on replante.
+item('carrot', {
+  name: 'Carotte', block: BLOCK_BY_KEY.get('carrots')!.id, icon: 'food', color: 0xe07818,
+  food: { hunger: 3, saturation: 3.6 },
+});
+// Les deux dorures : la pomme régénère longuement, la carotte soigne d'un coup.
+item('golden_apple', { name: 'Pomme dorée', maxStack: 16, color: 0xf7d84c, icon: 'food', food: { hunger: 4, saturation: 9.6 } });
+item('golden_carrot', { name: 'Carotte dorée', maxStack: 16, color: 0xf0c020, icon: 'food', food: { hunger: 6, saturation: 14.4 } });
 
 // Seaux : la seule façon de transporter un fluide, et donc de figer la lave en
 // obsidienne pour bâtir un portail sans dépendre d'un coffre de structure.
@@ -442,7 +461,8 @@ export function itemCategory(def: ItemDef): ItemCategory {
   }
   // Menuiserie : ce sont des mécanismes, on les ouvre et on les ferme.
   if (key === 'oak_door' || key === 'oak_fence_gate' || key === 'red_bed') return 'redstone';
-  if (key === 'ladder') return 'construction';
+  if (key === 'ladder' || key === 'oak_fence' || key === 'oak_trapdoor') return 'construction';
+  if (key === 'lucky_block') return 'redstone';
   if (NATURE_KEYS.has(key)) return 'nature';
   const b = BLOCKS[def.block];
   if (b && (b.render === RenderKind.Cross || key.endsWith('_leaves') || key.endsWith('_log') || key.endsWith('_sapling'))) {

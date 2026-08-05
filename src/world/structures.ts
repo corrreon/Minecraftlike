@@ -522,17 +522,20 @@ function buildPumpkinFarm(ctx: StructCtx, cx: number, y: number, cz: number, rnd
       const border = Math.abs(dx) === w || Math.abs(dz) === d;
       column(ctx, x, z, y, border ? B.coarse_dirt : B.dirt);
       if (border) {
-        // Muret bas : la parcelle se lit comme un enclos.
-        ctx.set(x, y + 1, z, B.cobblestone_slab, true);
+        // Vraie clôture, avec un portillon au milieu du côté nord pour entrer.
+        const portillon = dz === -d && dx === 0;
+        ctx.set(x, y + 1, z, portillon ? B.oak_fence_gate : B.oak_fence, true);
         continue;
       }
       const r = rnd();
       if (((dx + dz) & 1) === 0 && r < 0.7) ctx.set(x, y + 1, z, B.pumpkin, true);
-      else if (r < 0.85) ctx.set(x, y + 1, z, B.wheat, true);
+      else if (r < 0.78) ctx.set(x, y + 1, z, B.wheat, true);
+      else if (r < 0.88) ctx.set(x, y + 1, z, B.carrots, true);
     }
   }
-  // Une lanterne-citrouille marque l'entrée du champ.
-  ctx.set(cx, y + 1, cz - d, B.jack_o_lantern, true);
+  // Deux lanternes-citrouilles encadrent le portillon.
+  ctx.set(cx - 1, y + 1, cz - d, B.jack_o_lantern, true);
+  ctx.set(cx + 1, y + 1, cz - d, B.jack_o_lantern, true);
 }
 
 // ---------------------------------------------------------------------------

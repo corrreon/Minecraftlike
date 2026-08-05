@@ -355,11 +355,18 @@ export class Game {
     return out;
   }
 
-  /** Pose un bloc par sa clé : mise en place de scénarios de test. */
+  /**
+   * Pose un bloc par sa clé : mise en place de scénarios de test.
+   * Rend faux si le bloc est inconnu ou si le chunk n'est pas chargé — sans
+   * quoi un test croirait avoir bâti un décor qui n'existe pas.
+   */
   debugSet(x: number, y: number, z: number, key: string): boolean {
     const id = key === 'air' ? 0 : BLOCK_BY_KEY.get(key)?.id;
     if (id === undefined) return false;
-    this.setBlock(x, y, z, id);
+    if (!this.world.setBlock(x, y, z, id)) return false;
+    const cx = floorDiv(x, CHUNK_X);
+    const cz = floorDiv(z, CHUNK_Z);
+    this.save?.recordEdit(cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
     return true;
   }
 
@@ -1620,6 +1627,11 @@ export class Game {
       for (const d of blockDrops(hit.block, harvest, () => this.rnd())) {
         this.spawnDrop(hit.x + 0.5, hit.y + 0.25, hit.z + 0.5, makeStack(d.item, d.count));
       }
+      // Un chêne finit par donner : son feuillage lâche parfois une pomme.
+      if (def.key === 'oak_leaves' && this.rnd() < 0.06) {
+        const pomme = ITEM_BY_KEY.get('apple');
+        if (pomme) this.spawnDrop(hit.x + 0.5, hit.y + 0.25, hit.z + 0.5, makeStack(pomme, 1));
+      }
       const held = this.inventory.selectedStack;
       if (held?.item.tool) {
         if (this.inventory.damageSelected(1)) this.audio.break('wood');
@@ -1646,6 +1658,60 @@ export class Game {
     // Le bloc unique repousse aussitôt : c'est tout le principe du mode.
     if (this.worldType === 'oneblock' && hit.x === ONEBLOCK_X && hit.y === ONEBLOCK_Y && hit.z === ONEBLOCK_Z) {
       this.oneblockAdvance();
+    }
+    if (def.key === 'lucky_block') this.rollLuckyBlock(hit.x, hit.y, hit.z);
+  }
+
+  /**
+   * Tire au sort ce que rend un lucky bloc. Le tirage est fait ici et non dans
+   * une table de butin, parce que la moitié des issues ne sont pas des objets :
+   * une volée de créatures ou une explosion ne se rangent pas dans un coffre.
+   */
+  private rollLuckyBlock(x: number, y: number, z: number): void {
+    const r = this.rnd();
+    const cx = x + 0.5, cy = y + 0.5, cz = z + 0.5;
+    const donne = (key: string, n: number): void => {
+      const def = ITEM_BY_KEY.get(key);
+      if (def) this.spawnDrop(cx, cy, cz, makeStack(def, n));
+    };
+
+    if (r < 0.16) {
+      // Jackpot.
+      donne('diamond', 3 + Math.floor(this.rnd() * 5));
+      donne('golden_apple', 1);
+      this.hud.toast('Jackpot !');
+    } else if (r < 0.34) {
+      donne('gold_ingot', 4 + Math.floor(this.rnd() * 8));
+      donne('emerald', 1 + Math.floor(this.rnd() * 3));
+      this.hud.toast('Un joli magot.');
+    } else if (r < 0.5) {
+      const outils = ['diamond_pickaxe', 'diamond_sword', 'iron_chestplate', 'diamond_helmet'];
+      donne(outils[Math.floor(this.rnd() * outils.length)], 1);
+      this.hud.toast('De l’équipement !');
+    } else if (r < 0.62) {
+      donne('cooked_beef', 5 + Math.floor(this.rnd() * 6));
+      donne('golden_carrot', 2);
+      this.hud.toast('De quoi tenir un moment.');
+    } else if (r < 0.74) {
+      // Une tour de blocs de construction, en vrac.
+      for (const k of ['oak_planks', 'cobblestone', 'glass', 'torch']) donne(k, 16 + Math.floor(this.rnd() * 32));
+      this.hud.toast('Des matériaux plein les bras.');
+    } else if (r < 0.86) {
+      // Comité d'accueil.
+      const kinds: MobKind[] = this.rnd() < 0.5 ? ['zombie', 'skeleton'] : ['creeper', 'spider'];
+      for (let i = 0; i < 3; i++) {
+        const k = kinds[Math.floor(this.rnd() * kinds.length)];
+        this.addMob(k, cx + (this.rnd() - 0.5) * 3, y + 1, cz + (this.rnd() - 0.5) * 3);
+      }
+      this.hud.toast('Mauvaise pioche : des monstres !');
+    } else if (r < 0.94) {
+      // Un cheval, une vache : la bonne surprise vivante.
+      const k: MobKind = this.rnd() < 0.5 ? 'horse' : 'cow';
+      this.addMob(k, cx, y + 1, cz);
+      this.hud.toast('Une créature en sort !');
+    } else {
+      this.explode(cx, cy, cz, 2.6);
+      this.hud.toast('Aïe.');
     }
   }
 
@@ -1704,6 +1770,7 @@ export class Game {
       if (key.startsWith('oak_door_')) { this.toggleDoor(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
       if (key.startsWith('oak_fence_gate_')) { this.toggleGate(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
       if (key.startsWith('red_bed_')) { this.sleep(hit.x, hit.y, hit.z); return; }
+      if (key.startsWith('oak_trapdoor_')) { this.toggleTrapdoor(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
     }
 
     // Le briquet allume un cadre d'obsidienne : c'est la porte du Nether.
@@ -1728,8 +1795,16 @@ export class Game {
     }
 
     // Nourriture.
-    if (item.food && this.player.mode === GameMode.Survival && this.player.stats.food < 20) {
+    // Les dorures se mangent même le ventre plein : on les garde pour se
+    // soigner, pas pour se nourrir.
+    const dorure = item.key === 'golden_apple' ? 8 : item.key === 'golden_carrot' ? 4 : 0;
+    if (item.food && this.player.mode === GameMode.Survival && (this.player.stats.food < 20 || dorure > 0)) {
       this.player.eat(item.food.hunger, item.food.saturation);
+      if (dorure > 0) {
+        const st = this.player.stats;
+        st.health = Math.min(st.maxHealth, st.health + dorure);
+        this.hud.toast(item.key === 'golden_apple' ? 'La pomme dorée te remet d’aplomb.' : 'La carotte dorée te ravigote.');
+      }
       this.inventory.main.consume(this.inventory.selected);
       this.audio.eat();
       this.heldView.swing = 1;
@@ -2038,6 +2113,22 @@ export class Game {
       const otherHalf = half === 'lower' ? 'upper' : 'lower';
       this.setBlock(x, other, z, BLOCK_BY_KEY.get(`oak_door_${facing}_${otherHalf}_${next}`)!.id);
     }
+    this.audio.place('wood');
+  }
+
+  /**
+   * Bascule une trappe. Ouverte, elle se rabat contre le côté qu'on regarde ;
+   * fermée, elle redevient un plancher — et l'orientation, qu'on ne voit plus,
+   * n'est pas conservée.
+   */
+  private toggleTrapdoor(x: number, y: number, z: number): void {
+    const key = blockDef(this.world.getBlock(x, y, z)).key;
+    const ouverte = key.startsWith('oak_trapdoor_open_');
+    const id = ouverte
+      ? BLOCK_BY_KEY.get('oak_trapdoor_closed')!.id
+      : BLOCK_BY_KEY.get(`oak_trapdoor_open_${this.viewFacing()}`)!.id;
+    if (!ouverte && this.blocksPlayer(x, y, z, id)) return;
+    this.setBlock(x, y, z, id);
     this.audio.place('wood');
   }
 
@@ -2525,6 +2616,19 @@ export class Game {
 
   private hitMob(m: Mob): void {
     const held = this.inventory.selectedStack;
+
+    // Les cisailles tondent au lieu de blesser : c'est la façon paisible de
+    // récolter de la laine, sans avoir à abattre le troupeau.
+    if (held?.item.tool?.kind === 'shears' && m.kind === 'sheep' && !m.shorn) {
+      m.shorn = true;
+      const laine = ITEM_BY_KEY.get('white_wool');
+      if (laine) this.spawnDrop(m.position.x, m.position.y + 0.6, m.position.z, makeStack(laine, 1 + Math.floor(this.rnd() * 3)));
+      this.audio.mobHurt(m.kind);
+      if (this.player.mode !== GameMode.Creative) this.inventory.damageSelected(1);
+      this.heldView.swing = 1;
+      return;
+    }
+
     const damage = held?.item.tool?.damage ?? 1;
     const killed = m.hurt(damage);
     this.audio.mobHurt(m.kind);

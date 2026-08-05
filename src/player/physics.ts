@@ -2,7 +2,8 @@
 
 import { Vector3 } from 'three';
 import { WORLD_HEIGHT } from '../core/constants';
-import { IS_SOLID, MAX_BOXES, SHAPE_BOXES, SHAPE_COUNT, RENDER_KIND, RenderKind } from '../world/blocks';
+import { IS_GATE, IS_SOLID, MAX_BOXES, SHAPE_BOXES, SHAPE_COUNT, RENDER_KIND, RenderKind } from '../world/blocks';
+import { fenceConnects } from '../world/mesher';
 import type { World } from '../world/World';
 
 export interface Box {
@@ -23,6 +24,35 @@ export interface MoveResult {
   stepped: number;
 }
 
+/** Hauteur de collision d'une barrière : plus qu'un bloc, pour ne pas l'enjamber. */
+const FENCE_HEIGHT = 1.5;
+
+/**
+ * Emprise horizontale d'une barrière : le poteau central, plus une lisse vers
+ * chaque côté raccordé. Le raccordement suit la même règle qu'au maillage,
+ * pour que ce qu'on voit et ce qu'on heurte coïncident.
+ */
+function fenceOverlaps(world: World, b: Box, x: number, y: number, z: number): boolean {
+  const half = b.width / 2;
+  const bx0 = b.x - half, bx1 = b.x + half;
+  const bz0 = b.z - half, bz1 = b.z + half;
+  const croise = (x0: number, z0: number, x1: number, z1: number): boolean =>
+    bx1 > x + x0 && bx0 < x + x1 && bz1 > z + z0 && bz0 < z + z1;
+
+  if (croise(0.375, 0.375, 0.625, 0.625)) return true;
+  for (const [dx, dz] of FENCE_SIDES) {
+    if (!fenceConnects(world.getBlock(x + dx, y, z + dz))) continue;
+    const x0 = dx < 0 ? 0 : dx > 0 ? 0.625 : 0.4375;
+    const x1 = dx < 0 ? 0.375 : dx > 0 ? 1 : 0.5625;
+    const z0 = dz < 0 ? 0 : dz > 0 ? 0.625 : 0.4375;
+    const z1 = dz < 0 ? 0.375 : dz > 0 ? 1 : 0.5625;
+    if (croise(x0, z0, x1, z1)) return true;
+  }
+  return false;
+}
+
+const FENCE_SIDES: readonly (readonly [number, number])[] = [[0, -1], [0, 1], [-1, 0], [1, 0]];
+
 function overlaps(world: World, b: Box): boolean {
   const half = b.width / 2;
   const x0 = Math.floor(b.x - half + 1e-6);
@@ -32,23 +62,39 @@ function overlaps(world: World, b: Box): boolean {
   const z0 = Math.floor(b.z - half + 1e-6);
   const z1 = Math.floor(b.z + half - 1e-6);
   const top = b.y + b.height;
-  for (let y = y0; y <= y1; y++) {
+  // Une barrière dépasse du haut de son voxel : la rangée juste en dessous doit
+  // donc être examinée elle aussi, sans quoi on lui sauterait par-dessus.
+  for (let y = y0 - 1; y <= y1; y++) {
+    const sousLaBoite = y < y0;
     for (let z = z0; z <= z1; z++) {
       for (let x = x0; x <= x1; x++) {
-        if (y < 0) return true;
+        if (y < 0) { if (sousLaBoite) continue; return true; }
         if (y >= WORLD_HEIGHT) continue;
         const id = world.getBlock(x, y, z);
-        if (id < 0) return true; // chunk non chargé : mur invisible
+        if (id < 0) { if (sousLaBoite) continue; return true; } // chunk non chargé : mur invisible
         if (!IS_SOLID[id]) continue;
+        // Une barrière n'a pas de forme figée : elle se déduit du voisinage,
+        // exactement comme au maillage.
+        if (RENDER_KIND[id] === RenderKind.Fence) {
+          if (top <= y || b.y >= y + FENCE_HEIGHT) continue;
+          if (fenceOverlaps(world, b, x, y, z)) return true;
+          continue;
+        }
+        // Un portillon fermé se défend comme la barrière qu'il complète : sa
+        // collision monte au-dessus de son voxel, sinon on l'enjambe d'un saut
+        // et l'enclos ne sert plus à rien. Il reste dessiné à sa taille.
+        const portillon = IS_GATE[id] === 1;
+        if (sousLaBoite && !portillon) continue;
         // Les dalles n'occupent qu'une partie de leur voxel.
         // Un escalier est fait de deux boîtes : il faut les tester toutes,
         // sinon on traverse la marche haute.
         const n = SHAPE_COUNT[id];
         for (let k = 0; k < n && k < MAX_BOXES; k++) {
           const o = (id * MAX_BOXES + k) * 6;
+          const hautDeBoite = portillon ? FENCE_HEIGHT : SHAPE_BOXES[o + 4];
           if (b.x + b.width / 2 <= x + SHAPE_BOXES[o] || b.x - b.width / 2 >= x + SHAPE_BOXES[o + 3]) continue;
           if (b.z + b.width / 2 <= z + SHAPE_BOXES[o + 2] || b.z - b.width / 2 >= z + SHAPE_BOXES[o + 5]) continue;
-          if (b.y < y + SHAPE_BOXES[o + 4] && top > y + SHAPE_BOXES[o + 1]) return true;
+          if (b.y < y + hautDeBoite && top > y + SHAPE_BOXES[o + 1]) return true;
         }
       }
     }
@@ -211,7 +257,7 @@ export function raycast(
         const kind = RENDER_KIND[b];
         const targetable = includeFluids
           ? kind !== RenderKind.None
-          : kind === RenderKind.Cube || kind === RenderKind.Cross;
+          : kind === RenderKind.Cube || kind === RenderKind.Cross || kind === RenderKind.Fence;
         if (targetable) {
           hitPoint.copy(direction).multiplyScalar(t).add(origin);
           return { x, y, z, block: b, nx, ny, nz, distance: t, point: hitPoint.clone() };

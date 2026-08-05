@@ -16,6 +16,13 @@ export const enum RenderKind {
   Cross = 2,
   /** Fluide : surface légèrement abaissée et animée. */
   Liquid = 3,
+  /**
+   * Barrière : la forme se déduit des voisins au maillage — poteau central plus
+   * une paire de lisses vers chaque côté raccordé. Décrire les seize
+   * combinaisons dans la table des blocs aurait coûté seize identifiants par
+   * matériau ; il n'en reste qu'une poignée sur les 256 disponibles.
+   */
+  Fence = 4,
 }
 
 export const enum RenderLayer {
@@ -834,6 +841,96 @@ for (const facing of FACINGS) {
   });
 }
 
+/**
+ * Barrière. Un seul identifiant : sa silhouette est recalculée à chaque
+ * maillage d'après ses voisins. Elle est plus haute qu'un bloc pour qu'on ne
+ * l'enjambe pas — c'est tout l'intérêt d'un enclos.
+ */
+define('oak_fence', {
+  name: 'Barrière de chêne',
+  textures: 'oak_planks',
+  render: RenderKind.Fence,
+  layer: RenderLayer.Cutout,
+  solid: true,
+  opaque: false,
+  lightFilter: 0,
+  hardness: 2,
+  tool: 'axe',
+  sound: 'wood',
+  flammable: true,
+});
+
+/**
+ * Trappe. Fermée, c'est un panneau au sol qu'on foule ; ouverte, il bascule à
+ * la verticale contre l'un des quatre côtés.
+ *
+ * L'état fermé ne retient pas son orientation : elle serait invisible, et
+ * quatre identifiants de plus pour une information qu'on ne voit pas était un
+ * luxe que le budget ne permettait plus.
+ */
+const TRAPDOOR_SHUT: Box = [0, 0, 0, 1, 3 / 16, 1];
+
+define('oak_trapdoor_closed', {
+  name: 'Trappe de chêne',
+  textures: 'trapdoor',
+  layer: RenderLayer.Cutout,
+  solid: true,
+  opaque: false,
+  lightFilter: 0,
+  hardness: 3,
+  tool: 'axe',
+  sound: 'wood',
+  flammable: true,
+  drop: 'oak_trapdoor',
+  boxes: [TRAPDOOR_SHUT],
+});
+for (const facing of FACINGS) {
+  define(`oak_trapdoor_open_${facing}`, {
+    name: 'Trappe de chêne',
+    textures: 'trapdoor',
+    layer: RenderLayer.Cutout,
+    // Ouverte, elle ne porte plus rien : on tombe au travers, et c'est le but.
+    solid: false,
+    opaque: false,
+    lightFilter: 0,
+    hardness: 3,
+    tool: 'axe',
+    sound: 'wood',
+    flammable: true,
+    drop: 'oak_trapdoor',
+    boxes: [PANEL[facing]],
+  });
+}
+
+/**
+ * Lucky bloc. Ce qu'il rend est tiré au sort à la casse, du trésor à la
+ * mauvaise surprise ; c'est le jeu qui décide, pas la table de butin.
+ */
+define('lucky_block', {
+  name: 'Lucky bloc',
+  textures: 'lucky_block',
+  hardness: 1.2,
+  sound: 'wood',
+  emission: 3,
+  drop: 'air',
+});
+
+/** Carottes : une culture, comme le blé. */
+define('carrots', {
+  name: 'Carottes',
+  textures: 'carrots',
+  render: RenderKind.Cross,
+  layer: RenderLayer.Cutout,
+  solid: false,
+  opaque: false,
+  lightFilter: 0,
+  hardness: 0,
+  sound: 'grass',
+  flammable: true,
+  drop: 'carrot',
+  dropCount: [1, 3],
+});
+
 export const AIR = 0;
 export const BLOCK_COUNT = BLOCKS.length;
 
@@ -863,6 +960,8 @@ export const TEX_LAYERS = new Uint16Array(BLOCK_COUNT * 3);
 export const ROT_TOP = new Uint8Array(BLOCK_COUNT);
 /** Le bloc se grimpe (échelle). */
 export const IS_CLIMBABLE = new Uint8Array(BLOCK_COUNT);
+/** Portillon : une barrière voisine s'y raccorde. */
+export const IS_GATE = new Uint8Array(BLOCK_COUNT);
 
 for (const b of BLOCKS) {
   IS_OPAQUE[b.id] = b.opaque ? 1 : 0;
@@ -887,6 +986,7 @@ for (const b of BLOCKS) {
   TEX_LAYERS[b.id * 3 + 2] = b.layers.side;
   ROT_TOP[b.id] = b.rotTop;
   IS_CLIMBABLE[b.id] = b.climbable ? 1 : 0;
+  IS_GATE[b.id] = b.key.startsWith('oak_fence_gate_') ? 1 : 0;
 }
 
 export const TEXTURE_NAMES: readonly string[] = TEXTURE_ORDER;
@@ -992,6 +1092,10 @@ export const B = {
   end_portal_frame: blockId('end_portal_frame'),
   end_portal_frame_filled: blockId('end_portal_frame_filled'),
   nether_portal: blockId('nether_portal'),
+  oak_fence: blockId('oak_fence'),
+  oak_fence_gate: blockId('oak_fence_gate_north_closed'),
+  carrots: blockId('carrots'),
+  lucky_block: blockId('lucky_block'),
   end_portal: blockId('end_portal'),
   nether_bricks: blockId('nether_bricks'),
   purpur_block: blockId('purpur_block'),

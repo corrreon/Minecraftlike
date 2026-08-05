@@ -45,7 +45,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   et **coffres au trésor** enfouis sous les plages. Chaque chunk reconstruit
   intégralement la structure qui le touche et découpe ce qui dépasse : aucune
   couture quand on arrive par le bord.
-- **~245 blocs** : roches et variantes polies, minerais, quatre essences de
+- **~254 blocs** : roches et variantes polies, minerais, quatre essences de
   bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
   lumière, matériaux du Nether et de l'End, et une palette de construction
   complète — laine, **béton**, **terre cuite** et **verre teinté** dans les
@@ -53,8 +53,17 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   orientés selon le regard à la pose.
 - **Menuiserie** : **porte** sur deux blocs qui s'ouvre et se ferme d'un bloc,
   **portillon** qu'on franchit une fois ouvert, **lit** qui passe la nuit et
-  fixe le point de réapparition, et **échelle** qui se plaque contre un mur.
-  Tous s'orientent selon le regard.
+  fixe le point de réapparition, **échelle** qui se plaque contre un mur, et
+  **trappe** qui bascule du plancher à la cloison. Tous s'orientent selon le
+  regard.
+- **Barrière** : sa silhouette est recalculée à chaque maillage d'après ses
+  voisins — poteau central et lisses vers les côtés raccordés — si bien qu'elle
+  ne coûte qu'un seul identifiant de bloc au lieu des seize qu'auraient demandés
+  toutes les combinaisons. Elle et le portillon fermé montent plus haut que leur
+  voxel : un enclos ne s'enjambe pas d'un saut.
+- **Lucky bloc** : ce qu'il rend est tiré au sort à la casse — magot, équipement,
+  vivres, matériaux, une créature amicale, une volée de monstres, ou une
+  explosion. On en trouve dans les coffres au trésor et les portails engloutis.
 - **Trois types de monde** au choix à la création : normal, **superplat** pour
   bâtir sans terrain qui gêne, et **oneblock**.
 
@@ -140,9 +149,9 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **175 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  **179 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
   de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
-  porte, portillon, lit, échelle, seau,
+  porte, portillon, barrière, lit, échelle, trappe, seau, lucky bloc,
   TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
@@ -156,7 +165,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   L'eau versée sur la lave la **fige en obsidienne**, ce qui rend le portail du
   Nether constructible sans dépendre d'un coffre de structure — il ne reste
   qu'à l'allumer au briquet.
-- **Créatures** : cochon, vache, mouton, poule, **cheval**, zombie, squelette, creeper,
+- **Créatures** : cochon, vache, mouton (tondable), poule, **cheval**, zombie, squelette, creeper,
   araignée, **villageois**, **idiot du village**, **golem de fer**, **kraken**,
   **bloop**, **braise**, **enderman** et le **dragon de l'End** — modèles
   articulés animés (ailes battantes et queue ondulante pour le dragon), IA
@@ -171,6 +180,11 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Survie** : vie, faim et saturation, souffle sous l'eau, dégâts de chute, de
   lave, de cactus et de famine, régénération, armure et réduction de dégâts,
   écran de mort et réapparition.
+- **Cueillette et élevage** : les feuillages de chêne lâchent parfois une
+  **pomme**, les **carottes** poussent dans les champs des villages, et les
+  **cisailles** tondent un mouton pour sa laine sans avoir à l'abattre. La
+  **pomme dorée** et la **carotte dorée** se mangent même le ventre plein : ce
+  sont des soins, pas des repas.
 - **Physique** : collisions AABB par axe avec résolution dichotomique, nage,
   vol, accroupissement (qui empêche de tomber d'un rebord), saut automatique
   optionnel, sable et gravier qui tombent. Sur une **échelle**, la verticale
@@ -282,6 +296,7 @@ Quelques points de conception :
   restent hors de portée du mailleur.
 - Il ne reste que **10 identifiants de bloc libres** sur 256 : toute famille
   orientée supplémentaire demanderait de passer les identifiants sur 16 bits.
+- Une trappe fermée oublie son orientation, qu'on ne voit plus de toute façon.
 - Les escaliers ne se posent qu'à l'endroit et les portes n'ont qu'un sens de
   battant : les variantes retournées ou à gonds inversés doubleraient le nombre
   d'identifiants pour un usage bien plus rare.
