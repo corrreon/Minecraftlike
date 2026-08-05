@@ -332,6 +332,9 @@ item('carrot', {
 item('golden_apple', { name: 'Pomme dorée', maxStack: 16, color: 0xf7d84c, icon: 'food', food: { hunger: 4, saturation: 9.6 } });
 item('golden_carrot', { name: 'Carotte dorée', maxStack: 16, color: 0xf0c020, icon: 'food', food: { hunger: 6, saturation: 14.4 } });
 
+// L'avion n'est pas un bloc : l'objet fait apparaître l'engin devant soi.
+item('plane', { name: 'Avion', maxStack: 1, color: 0xd23c30, icon: 'tool' });
+
 // Seaux : la seule façon de transporter un fluide, et donc de figer la lave en
 // obsidienne pour bâtir un portail sans dépendre d'un coffre de structure.
 item('bucket', { name: 'Seau', maxStack: 1, color: 0xb0b6bd, icon: 'nugget' });
@@ -448,6 +451,8 @@ const NATURE_KEYS = new Set([
 ]);
 
 export function itemCategory(def: ItemDef): ItemCategory {
+  // L'avion se range avec l'équipement : c'est un engin, pas un matériau.
+  if (def.key === 'plane') return 'outils';
   if (def.tool || def.armor) return 'outils';
   if (def.food) return 'nourriture';
   if (!def.block) return 'ressources';

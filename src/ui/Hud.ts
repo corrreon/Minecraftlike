@@ -48,6 +48,7 @@ export class Hud {
   private hungerEl: HTMLElement;
   private breathEl: HTMLElement;
   private heldName: HTMLElement;
+  private airspeedEl: HTMLElement;
   private debugEl: HTMLElement;
   private toastStack: HTMLElement;
   private vignette: HTMLElement;
@@ -69,6 +70,7 @@ export class Hud {
     this.hungerEl = document.getElementById('hunger')!;
     this.breathEl = document.getElementById('breath')!;
     this.heldName = document.getElementById('held-item-name')!;
+    this.airspeedEl = document.getElementById('airspeed')!;
     this.debugEl = document.getElementById('debug')!;
     this.toastStack = document.getElementById('toast-stack')!;
     this.vignette = document.getElementById('hit-vignette')!;
@@ -179,6 +181,17 @@ export class Hud {
   }
 
   // --- Notifications ------------------------------------------------------
+
+  /**
+   * Badinier de l'engin piloté. `null` le masque. Sans lui, le décrochage
+   * arrive sans prévenir : rien à l'écran ne dit qu'on ralentit.
+   */
+  setAirspeed(speed: number | null, stall = 0): void {
+    if (speed === null) { this.airspeedEl.classList.remove('show'); return; }
+    this.airspeedEl.classList.add('show');
+    this.airspeedEl.classList.toggle('stall', speed < stall);
+    this.airspeedEl.textContent = `${speed.toFixed(0)} m/s${speed < stall ? '  ⚠ décrochage' : ''}`;
+  }
 
   toast(message: string, kind: 'info' | 'warn' | 'error' = 'info', duration = 3200): void {
     const t = el('div', `toast ${kind === 'info' ? '' : kind}`.trim(), this.toastStack);

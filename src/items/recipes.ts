@@ -204,6 +204,9 @@ RECIPES.push(shaped(['GGG', 'GCG', 'GGG'], { G: 'gold_ingot', C: 'chest' }, 'luc
 // Sept bâtons en échelle donnent trois échelons.
 RECIPES.push(shaped(['S S', 'SSS', 'S S'], { S: 'stick' }, 'ladder', 3));
 
+// Avion : un moteur d'or, des ailes de fer, un fuselage de planches.
+RECIPES.push(shaped([' G ', 'IPI', 'I I'], { G: 'gold_ingot', I: 'iron_ingot', P: PLANKS }, 'plane'));
+
 // --- Seaux -----------------------------------------------------------------
 RECIPES.push(shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket'));
 

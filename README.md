@@ -61,6 +61,13 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   ne coûte qu'un seul identifiant de bloc au lieu des seize qu'auraient demandés
   toutes les combinaisons. Elle et le portillon fermé montent plus haut que leur
   voxel : un enclos ne s'enjambe pas d'un saut.
+- **Avion** : un engin pilotable, fabriqué puis posé au sol. On monte à bord au
+  clic droit, et on vole là où l'on regarde — la caméra tient lieu de manche.
+  `Espace` met les gaz, `Maj` freine, et un badinier affiche la vitesse. Toute
+  la difficulté tient dans ce seul chiffre : au-dessus de la vitesse de
+  décrochage l'avion tient sa trajectoire, en dessous la portance s'effondre au
+  carré et il tombe. On n'en descend qu'une fois posé et à l'arrêt, et le
+  frapper le replie en objet.
 - **Lucky bloc** : ce qu'il rend est tiré au sort à la casse — magot, équipement,
   vivres, matériaux, une créature amicale, une volée de monstres, ou une
   explosion. On en trouve dans les coffres au trésor et les portails engloutis.
@@ -149,9 +156,9 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **179 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  **180 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
   de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
-  porte, portillon, barrière, lit, échelle, trappe, seau, lucky bloc,
+  porte, portillon, barrière, lit, échelle, trappe, seau, lucky bloc, avion,
   TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
@@ -289,6 +296,9 @@ Quelques points de conception :
 
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
+- Les créatures et les engins ne sont pas sauvegardés non plus : un avion laissé
+  au sol disparaît au rechargement. Le frapper le rend sous forme d'objet, et
+  l'inventaire, lui, est bien conservé.
 - Les fluides ne s'écoulent pas : l'eau et la lave sont statiques, et ce qu'on
   verse au seau reste une source isolée.
 - Les formes non cubiques se limitent à deux boîtes par bloc : dalles, escaliers

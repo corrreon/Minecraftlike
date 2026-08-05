@@ -29,7 +29,8 @@ export type MobKind =
   | 'pig' | 'cow' | 'sheep' | 'chicken' | 'horse'
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
-  | 'blaze' | 'enderman' | 'ender_dragon';
+  | 'blaze' | 'enderman' | 'ender_dragon'
+  | 'plane';
 
 interface MobPart {
   name: string;
@@ -37,7 +38,7 @@ interface MobPart {
   offset: [number, number, number];
   color: number;
   /** Type d'animation appliqué à la pièce. */
-  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'none';
+  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'prop' | 'none';
 }
 
 interface MobTraits {
@@ -59,6 +60,11 @@ interface MobTraits {
   blinks?: boolean;
   /** Le joueur peut la monter : elle obéit alors au lieu d'errer. */
   rideable?: boolean;
+  /**
+   * Engin volant piloté : ni IA ni errance. Il suit le regard du pilote, et ne
+   * tient en l'air que tant qu'il a de la vitesse.
+   */
+  aircraft?: boolean;
   /**
    * Boss : tourne en orbite autour du centre de l'île et pique sur le joueur.
    * `[rayon, altitude]` de l'orbite.
@@ -382,7 +388,44 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'footR', size: [0.2, 0.14, 0.24], offset: [0.22, 0.07, 0], color: 0x4fae59, anim: 'legFR' },
     ],
     { hops: true }),
+
+  // Avion. Vitesse nulle au repos : garé, il ne bouge pas d'un pouce, et son
+  // pilotage ne passe pas par l'IA mais par `updateAircraft`.
+  plane: M('Avion', false, 40, 0, 1.3, 1.7, 0, 0, 0, [],
+    [
+      { name: 'fuselage', size: [0.7, 0.66, 3.2], offset: [0, 1.0, 0], color: 0xd23c30 },
+      { name: 'nose', size: [0.58, 0.58, 0.5], offset: [0, 1.02, -1.82], color: 0xb02c22 },
+      { name: 'moyeu', size: [0.2, 0.2, 0.16], offset: [0, 1.02, -2.12], color: 0x3a3a40 },
+      { name: 'helice', size: [1.7, 0.14, 0.06], offset: [0, 1.02, -2.2], color: 0x6a6a72, anim: 'prop' },
+      { name: 'aileL', size: [2.3, 0.13, 0.95], offset: [-1.45, 1.12, -0.1], color: 0xf0efe8 },
+      { name: 'aileR', size: [2.3, 0.13, 0.95], offset: [1.45, 1.12, -0.1], color: 0xf0efe8 },
+      { name: 'bandeL', size: [2.3, 0.05, 0.2], offset: [-1.45, 1.2, -0.1], color: 0xd23c30 },
+      { name: 'bandeR', size: [2.3, 0.05, 0.2], offset: [1.45, 1.2, -0.1], color: 0xd23c30 },
+      { name: 'cabine', size: [0.52, 0.4, 0.85], offset: [0, 1.42, -0.35], color: 0x2a3a4a },
+      { name: 'derive', size: [0.11, 0.75, 0.65], offset: [0, 1.6, 1.42], color: 0xd23c30 },
+      { name: 'planL', size: [0.9, 0.11, 0.45], offset: [-0.52, 1.16, 1.5], color: 0xf0efe8 },
+      { name: 'planR', size: [0.9, 0.11, 0.45], offset: [0.52, 1.16, 1.5], color: 0xf0efe8 },
+      { name: 'trainL', size: [0.14, 0.5, 0.14], offset: [-0.5, 0.45, -0.6], color: 0x3a3a40 },
+      { name: 'trainR', size: [0.14, 0.5, 0.14], offset: [0.5, 0.45, -0.6], color: 0x3a3a40 },
+      { name: 'roueL', size: [0.28, 0.28, 0.16], offset: [-0.5, 0.18, -0.6], color: 0x1c1c20 },
+      { name: 'roueR', size: [0.28, 0.28, 0.16], offset: [0.5, 0.18, -0.6], color: 0x1c1c20 },
+      { name: 'roulette', size: [0.2, 0.2, 0.12], offset: [0, 0.16, 1.35], color: 0x1c1c20 },
+    ],
+    { rideable: true, aircraft: true }),
 };
+
+// --- Modèle de vol ---------------------------------------------------------
+// Volontairement « arcade » : on vole là où l'on regarde, et la seule chose à
+// surveiller est la vitesse. Un modèle réaliste demanderait un manche, des
+// gouvernes et un compensateur — hors de portée d'un enfant à la souris.
+/** Vitesse maximale, en blocs par seconde. */
+const PLANE_MAX = 26;
+/** Poussée, freinage et traînée, en blocs par seconde carrée. */
+const PLANE_ACCEL = 9;
+const PLANE_BRAKE = 13;
+const PLANE_DRAG = 2.2;
+/** En dessous de cette vitesse, la portance s'efface et l'avion décroche. */
+const PLANE_STALL = 9;
 
 export function coloredBox(w: number, h: number, d: number, color: number): BoxGeometry {
   const g = new BoxGeometry(w, h, d);
@@ -441,6 +484,15 @@ export class Mob {
   driveX = 0;
   driveZ = 0;
   driveJump = false;
+  /** Commandes propres au vol : cap et assiette visés, et frein. */
+  driveYaw = 0;
+  drivePitch = 0;
+  driveBrake = false;
+  /** Vitesse air de l'engin piloté. */
+  airspeed = 0;
+  /** Assiette et inclinaison du modèle, pour le rendu. */
+  private pitch = 0;
+  private roll = 0;
   /** Téléportation demandée par un coup reçu (enderman). */
   private blinkPending = false;
   private blinkCooldown = 0;
@@ -479,6 +531,13 @@ export class Mob {
 
   update(dt: number, world: World, playerPos: Vector3, playerReachable: boolean, dayFactor: number, onDamagePlayer: (dmg: number) => void, onExplode: (m: Mob) => void): void {
     this.age += dt;
+    // Un engin piloté a sa propre physique : ni décision, ni errance, ni
+    // poursuite. Le brancher dans la chaîne commune reviendrait à laisser
+    // l'errance écraser les commandes une image sur deux.
+    if (this.def.aircraft && this.ridden) {
+      this.updateAircraft(dt, world, dayFactor);
+      return;
+    }
     if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 3);
     if (this.attackCooldown > 0) this.attackCooldown -= dt;
     if (this.jumpCooldown > 0) this.jumpCooldown -= dt;
@@ -568,8 +627,8 @@ export class Mob {
           onDamagePlayer(d.damage);
         }
       }
-    } else {
-      // Errance.
+    } else if (!d.aircraft) {
+      // Errance. Un engin garé, lui, ne bouge pas tout seul.
       this.wanderTimer -= dt;
       if (this.wanderTimer <= 0) {
         // L'idiot repart dans une autre direction toutes les demi-secondes.
@@ -671,6 +730,69 @@ export class Mob {
     this.material.uniforms.uFlash.value = Math.max(this.hurtFlash, flashing);
   }
 
+  /**
+   * Vol piloté. L'avion suit le regard du pilote ; la vitesse fait tout le
+   * reste. Au-dessus de la vitesse de décrochage il tient sa trajectoire, en
+   * dessous la portance s'efface et il retombe.
+   */
+  private updateAircraft(dt: number, world: World, dayFactor: number): void {
+    if (this.driveJump) this.airspeed = Math.min(PLANE_MAX, this.airspeed + PLANE_ACCEL * dt);
+    else if (this.driveBrake) this.airspeed = Math.max(0, this.airspeed - PLANE_BRAKE * dt);
+    else this.airspeed = Math.max(0, this.airspeed - PLANE_DRAG * dt);
+
+    // Cap et assiette visés, lissés : sans ça, un coup de souris ferait pivoter
+    // l'avion instantanément et le vol serait illisible.
+    const dYaw = wrapAngle(this.driveYaw - this.yaw);
+    const suivi = Math.min(1, 5 * dt);
+    this.yaw = wrapAngle(this.yaw + dYaw * suivi);
+    this.pitch += (this.drivePitch - this.pitch) * suivi;
+
+    const cp = Math.cos(this.pitch);
+    const dx = -Math.sin(this.yaw) * cp;
+    const dy = -Math.sin(this.pitch);
+    const dz = -Math.cos(this.yaw) * cp;
+
+    // Portance. Elle vaut 1 dès la vitesse de décrochage — l'avion tient alors
+    // exactement la trajectoire visée — et s'effondre au carré en dessous : un
+    // décrochage doit se creuser vite, sinon l'avion plane indéfiniment moteur
+    // coupé et la vitesse cesse d'être un enjeu.
+    const v = Math.min(1, this.airspeed / PLANE_STALL);
+    const portance = v * v;
+    this.velocity.x = dx * this.airspeed;
+    this.velocity.z = dz * this.airspeed;
+    this.velocity.y += (dy * this.airspeed - this.velocity.y) * Math.min(1, 6 * dt) * portance;
+    this.velocity.y -= GRAVITY * dt * (1 - portance);
+    if (this.velocity.y < -TERMINAL_VELOCITY) this.velocity.y = -TERMINAL_VELOCITY;
+
+    // L'inclinaison suit le taux de virage : l'avion se penche dans ses virages.
+    const vise = clampNum(-dYaw * 2.2, -0.7, 0.7);
+    this.roll += (vise - this.roll) * Math.min(1, 4 * dt);
+
+    const d = this.def;
+    const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: d.width, height: d.height };
+    const res = moveBox(world, box, this.velocity, dt, 0.55);
+    this.position.set(box.x, box.y, box.z);
+    this.onGround = res.onGround;
+    // Un choc contre le relief coupe l'élan : on ne traverse pas une colline.
+    if (res.hitX || res.hitZ) this.airspeed *= 0.3;
+    // Au sol, les roues freinent toutes seules.
+    if (res.onGround && !this.driveJump) this.airspeed = Math.max(0, this.airspeed - PLANE_DRAG * 2 * dt);
+    if (this.position.y < -8) { this.dead = true; return; }
+
+    this.group.position.copy(this.position);
+    // Le modèle regarde vers -Z, d'où le demi-tour ; l'ordre YXZ fait tourner
+    // l'assiette et l'inclinaison dans le repère déjà orienté par le cap.
+    this.group.rotation.order = 'YXZ';
+    this.group.rotation.set(-this.pitch, this.yaw + Math.PI, this.roll);
+    this.walkPhase += dt * (2 + this.airspeed);
+    this.animate(this.airspeed);
+
+    const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));
+    voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
+    (this.material.uniforms.uLight.value as Color).copy(lightColor);
+    this.material.uniforms.uFlash.value = this.hurtFlash;
+  }
+
   private animate(planar: number): void {
     const d = this.def;
     // Une masse gélatineuse s'écrase à l'atterrissage et s'étire en l'air.
@@ -713,6 +835,11 @@ export class Mob {
           // d'un bloc.
           p.mesh.rotation.y = Math.sin(this.age * 1.7 - p.base.z * 0.35) * 0.28;
           break;
+        // L'hélice tourne d'autant plus vite que l'avion va vite, et continue
+        // de tourner au ralenti moteur coupé.
+        case 'prop':
+          p.mesh.rotation.z = this.age * (6 + this.airspeed * 3.2);
+          break;
         default:
           break;
       }
@@ -735,7 +862,7 @@ export class Mob {
         );
         continue;
       }
-      if (p.anim && p.anim !== 'head' && p.anim !== 'none') {
+      if (p.anim && p.anim !== 'head' && p.anim !== 'none' && p.anim !== 'prop') {
         // Pivot au sommet de la pièce plutôt qu'en son centre.
         const h = (p.mesh.geometry as BoxGeometry).parameters.height;
         const r = p.mesh.rotation.x;
@@ -950,6 +1077,14 @@ export function findWaterSpawnSpot(
     }
   }
   return null;
+}
+
+/** Ramène un écart d'angle dans [-π, π] : un cap ne fait jamais le tour long. */
+function wrapAngle(a: number): number {
+  let r = a;
+  while (r > Math.PI) r -= Math.PI * 2;
+  while (r < -Math.PI) r += Math.PI * 2;
+  return r;
 }
 
 function clampNum(v: number, lo: number, hi: number): number {

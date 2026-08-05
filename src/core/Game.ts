@@ -66,6 +66,8 @@ import { buildIcons } from '../ui/icons';
 import { mulberry32 } from '../world/noise';
 
 const MOB_TICK = 1.8;
+/** Vitesse de décrochage d'un avion, dupliquée ici pour l'affichage. */
+const PLANE_STALL_SPEED = 9;
 /** Plafond d'objets au sol, et durée au bout de laquelle ils s'effacent. */
 const MAX_DROPS = 320;
 const DROP_LIFETIME = 300;
@@ -340,11 +342,16 @@ export class Game {
       .map((m) => ({ kind: m.kind, position: m.position.toArray().map((v) => +v.toFixed(2)) }));
   }
 
+  /** Vitesse air de l'engin piloté, ou 0. */
+  debugAirspeed(): number {
+    return this.mount ? this.mount.airspeed : 0;
+  }
+
   /** Créature montée, s'il y en a une. */
-  debugMount(): { kind: string; position: number[]; drive: number[]; yaw: number } | null {
+  debugMount(): { kind: string; position: number[]; drive: number[]; yaw: number; onGround: boolean } | null {
     const m = this.mount;
     return m
-      ? { kind: m.kind, position: m.position.toArray(), drive: [m.driveX, m.driveZ], yaw: this.player.yaw }
+      ? { kind: m.kind, position: m.position.toArray(), drive: [m.driveX, m.driveZ], yaw: this.player.yaw, onGround: m.onGround }
       : null;
   }
 
@@ -1001,7 +1008,9 @@ export class Game {
       case 'tuer':
       case 'kill': {
         let n = 0;
-        for (const m of this.mobs) { m.dead = true; n++; }
+        // Les engins pilotés sont épargnés : ce sont des biens du joueur, pas
+        // des créatures qui repeuplent le monde toutes seules.
+        for (const m of this.mobs) { if (m.def.aircraft) continue; m.dead = true; n++; }
         this.echo(`${n} créature(s) supprimée(s).`);
         break;
       }
@@ -1789,6 +1798,16 @@ export class Game {
     if (!stackHeld) return;
     const item = stackHeld.item;
 
+    // L'avion n'est pas un bloc : il apparaît devant soi, prêt à décoller.
+    if (item.key === 'plane' && hit) {
+      this.addMob('plane', hit.x + hit.nx + 0.5, hit.y + hit.ny, hit.z + hit.nz + 0.5);
+      this.audio.click();
+      this.heldView.swing = 1;
+      if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+      this.hud.toast('Clic droit pour monter à bord.');
+      return;
+    }
+
     // Seaux : puiser, verser, et figer la lave en obsidienne.
     if (item.key === 'bucket' || item.key === 'water_bucket' || item.key === 'lava_bucket') {
       if (this.useBucket(item.key, hit)) return;
@@ -1883,6 +1902,7 @@ export class Game {
   private dismount(): void {
     const m = this.mount;
     if (!m) return;
+    this.hud.setAirspeed(null);
     m.ridden = false;
     m.driveX = 0;
     m.driveZ = 0;
@@ -1904,6 +1924,26 @@ export class Game {
     if (m.dead || this.player.dead || this.player.mode === GameMode.Spectator) { this.dismount(); return; }
 
     const st = this.input.state;
+
+    // Un avion se pilote au regard : cap et assiette viennent de la caméra, et
+    // seules la poussée et le frein restent au clavier. On n'en descend qu'une
+    // fois posé — sauter en marche n'est pas une commande, c'est un accident.
+    if (m.def.aircraft) {
+      m.driveYaw = this.player.yaw;
+      m.drivePitch = this.player.pitch;
+      m.driveJump = st.jump;
+      m.driveBrake = st.sneak;
+      if (st.sneak && m.onGround && m.airspeed < 1) { this.dismount(); return; }
+      const seat = m.position.y + m.def.height * 0.62;
+      this.player.position.x = m.position.x;
+      this.player.position.z = m.position.z;
+      this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
+      this.player.velocity.set(0, 0, 0);
+      this.player.onGround = m.onGround;
+      this.hud.setAirspeed(m.airspeed, PLANE_STALL_SPEED);
+      return;
+    }
+
     if (st.sneak) { this.dismount(); return; }
 
     // Le repère est celui du joueur : « avant » vaut (-sin yaw, -cos yaw).
@@ -2616,6 +2656,20 @@ export class Game {
 
   private hitMob(m: Mob): void {
     const held = this.inventory.selectedStack;
+
+    // Frapper un avion le replie en objet : c'est la seule façon de le
+    // déplacer, et ça évite d'en semer un peu partout.
+    if (m.kind === 'plane') {
+      if (m === this.mount) this.dismount();
+      m.dead = true;
+      const def = ITEM_BY_KEY.get('plane');
+      if (def && this.player.mode !== GameMode.Creative) {
+        this.spawnDrop(m.position.x, m.position.y + 0.5, m.position.z, makeStack(def, 1));
+      }
+      this.audio.break('metal');
+      this.heldView.swing = 1;
+      return;
+    }
 
     // Les cisailles tondent au lieu de blesser : c'est la façon paisible de
     // récolter de la laine, sans avoir à abattre le troupeau.

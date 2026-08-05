@@ -172,6 +172,18 @@ img {
   white-space: nowrap;
 }
 
+.airspeed {
+  font-size: 12px;
+  letter-spacing: .08em;
+  padding: 3px 10px;
+  background: rgba(8, 10, 16, .72);
+  border-radius: 3px;
+  display: none;
+}
+/* Sous la vitesse de décrochage, l'avion tombe : l'alerte doit sauter aux yeux. */
+.airspeed.stall { color: #ff8f7f; }
+.airspeed.show { display: block; }
+
 .held-name.show {
   opacity: 1;
 }
