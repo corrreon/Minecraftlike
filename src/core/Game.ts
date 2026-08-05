@@ -53,7 +53,7 @@ import { ParticleSystem, Weather } from '../render/Particles';
 import { PostFX, projectSun } from '../render/PostFX';
 import { Sky, computeSkyState, createSkyState, type SkyState } from '../render/Sky';
 import { ShadowMap } from '../render/ShadowMap';
-import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type PlayerSave, type WorldMeta } from '../save/SaveManager';
+import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type EntitySave, type PlayerSave, type WorldMeta } from '../save/SaveManager';
 import { B, BLOCKS, BLOCK_BY_KEY, FACINGS, IS_SOLID, RenderKind, block as blockDef, type Facing } from '../world/blocks';
 import { biomeDef } from '../world/biomes';
 import { ChunkState } from '../world/Chunk';
@@ -116,6 +116,8 @@ export class Game {
   private drops: ItemEntity[] = [];
   /** Créature actuellement montée, ou null. */
   private mount: Mob | null = null;
+  /** Les entités écrites ont déjà été relues pour la dimension courante. */
+  private entitiesRestored = false;
   private entityGroup = new Group();
   private particles!: ParticleSystem;
   private weather = new Weather();
@@ -338,6 +340,16 @@ export class Game {
     return true;
   }
 
+  /** Ce qui serait écrit dans la sauvegarde pour la dimension courante. */
+  debugEntities(): unknown[] {
+    return this.serializeEntities();
+  }
+
+  /** Force une sauvegarde immédiate. */
+  debugPersist(): Promise<void> {
+    return this.persist(false);
+  }
+
   /** Relevé des créatures vivantes : espèce et position. */
   debugMobs(): { kind: string; position: number[] }[] {
     return this.mobs.filter((m) => !m.dead)
@@ -545,6 +557,7 @@ export class Game {
 
     this.chunks.setCenter(this.player.position.x, this.player.position.z);
     this.worldReady = false;
+    this.entitiesRestored = false;
     this.sessionReady = true;
     this.paused = false;
     this.hud.show(true);
@@ -617,6 +630,7 @@ export class Game {
     this.drops = [];
     this.blockEntities.clear();
     this.worldReady = false;
+    this.entitiesRestored = false;
   }
 
   private async quitToMenu(): Promise<void> {
@@ -1194,6 +1208,12 @@ export class Game {
         else if (this.worldType === 'oneblock') this.placeOnOneblock();
         else if (this.dimension === 'overworld') this.placePlayerOnGround();
         this.worldReady = true;
+        // Les créatures de la dimension reviennent une fois le terrain là :
+        // les faire naître dans du vide les ferait tomber à travers le monde.
+        if (!this.entitiesRestored) {
+          this.entitiesRestored = true;
+          void this.restoreDimensionEntities();
+        }
         this.setLoading(false, '');
         if (!this.input.touchEnabled) this.input.requestLock();
         else this.hud.enableTouch(this.touchHandlers());
@@ -2395,6 +2415,7 @@ export class Game {
 
     this.arrivedFrom = from;
     this.worldReady = false;
+    this.entitiesRestored = false;
     this.sessionReady = true;
     this.portalCooldown = 4;
     this.chunks.setCenter(this.player.position.x, this.player.position.z);
@@ -2405,6 +2426,9 @@ export class Game {
 
   /** Démonte tout ce qui appartient à la dimension quittée. */
   private teardownDimension(): void {
+    // Les créatures partent avec la dimension : on les écrit avant de les
+    // détruire, sinon franchir un portail effacerait tout un cheptel.
+    this.flushEntities(this.dimension);
     if (this.chunks) { this.chunks.dispose(); this.scene.remove(this.chunks.group); }
     if (this.pool) this.pool.dispose();
     if (this.particles) this.scene.remove(this.particles.mesh);
@@ -3019,10 +3043,63 @@ export class Game {
     return true;
   }
 
-  private addMob(kind: MobKind, x: number, y: number, z: number): void {
+  private addMob(kind: MobKind, x: number, y: number, z: number): Mob {
     const m = new Mob(kind, x, y, z, this.env, (Math.random() * 1e9) | 0);
     this.mobs.push(m);
     this.entityGroup.add(m.group);
+    return m;
+  }
+
+  // --- Persistance des créatures et des engins ------------------------------
+
+  /**
+   * Créatures et engins de la dimension courante, prêts à être écrits.
+   *
+   * Le dragon est exclu : c'est la logique de l'End qui décide de sa présence,
+   * d'après le drapeau « déjà vaincu ». Le restaurer en plus en ferait deux.
+   */
+  private serializeEntities(): EntitySave[] {
+    const out: EntitySave[] = [];
+    for (const m of this.mobs) {
+      if (m.dead || m.kind === 'ender_dragon') continue;
+      out.push({
+        kind: m.kind,
+        x: +m.position.x.toFixed(2), y: +m.position.y.toFixed(2), z: +m.position.z.toFixed(2),
+        yaw: +m.yaw.toFixed(3),
+        health: m.health,
+        shorn: m.shorn || undefined,
+        airspeed: m.def.aircraft ? +m.airspeed.toFixed(2) : undefined,
+      });
+    }
+    return out;
+  }
+
+  /** Recrée les créatures et les engins écrits pour la dimension courante. */
+  private restoreEntities(list: EntitySave[]): void {
+    for (const e of list) {
+      if (!(e.kind in MOBS)) continue; // espèce disparue d'une version à l'autre
+      const m = this.addMob(e.kind as MobKind, e.x, e.y, e.z);
+      m.yaw = e.yaw;
+      m.health = Math.min(m.def.health, Math.max(1, e.health));
+      if (e.shorn) m.shorn = true;
+      if (e.airspeed !== undefined) m.airspeed = e.airspeed;
+    }
+  }
+
+  /** Relit et recrée les entités écrites pour la dimension courante. */
+  private async restoreDimensionEntities(): Promise<void> {
+    if (!this.save) return;
+    const dimension = this.dimension;
+    const list = await this.save.loadEntities(dimension);
+    // Le joueur a pu changer de dimension pendant la lecture.
+    if (!list.length || this.dimension !== dimension) return;
+    this.restoreEntities(list);
+  }
+
+  /** Écrit les entités d'une dimension donnée, sans attendre la fin. */
+  private flushEntities(dimension: Dimension): void {
+    if (!this.save) return;
+    void this.save.saveEntities(dimension, this.serializeEntities());
   }
 
   private explode(x: number, y: number, z: number, radius: number): void {
@@ -3383,6 +3460,7 @@ export class Game {
       ? [this.returnPos.x, this.returnPos.y, this.returnPos.z]
       : undefined;
     await this.save.savePlayer(state);
+    await this.save.saveEntities(this.dimension, this.serializeEntities());
     await this.save.flush();
     if (final) this.hud.toast('Partie sauvegardée.');
   }

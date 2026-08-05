@@ -164,6 +164,12 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
   lingots d'or donnent un lingot, et l'équipement en diamant s'améliore.
+- **Créatures et engins sauvegardés** : le cheptel, les villageois et les avions
+  sont écrits par dimension et retrouvés à l'identique au rechargement —
+  position, cap, points de vie, mouton déjà tondu, vitesse de l'appareil. Les
+  entités reviennent une fois le terrain chargé, sans quoi elles naîtraient dans
+  du vide et tomberaient à travers le monde. Le dragon fait exception : c'est la
+  logique de l'End qui décide de sa présence, le restaurer en ferait deux.
 - **Coffres de structures** : leur contenu est tiré depuis leur position, sans
   jamais être stocké — le même coffre rend donc toujours le même butin, même
   après un rechargement du monde.
@@ -201,7 +207,10 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   au lieu de tomber — sans dégâts de chute.
 - **Sauvegarde IndexedDB** : plusieurs mondes, seuls les blocs modifiés sont
   stockés (le terrain est reproductible depuis la graine), position, inventaire,
-  armure, heure et temps de jeu ; sauvegarde automatique.
+  armure, heure, temps de jeu, plus les **créatures et les engins**, rangés par
+  dimension ; sauvegarde automatique. L'espèce d'une créature est écrite par son
+  nom et non par un indice : la liste a beaucoup bougé, et un indice aurait fait
+  ressortir des chevaux en guise de zombies au moindre réordonnancement.
 - **Outils de construction** (console) : `/pos1` et `/pos2` marquent une zone
   depuis le bloc visé, puis `/remplir`, `/coque`, `/remplacer`, `/copier`,
   `/coller` et `/annuler`. Les opérations en masse écrivent les blocs
@@ -307,9 +316,8 @@ Quelques points de conception :
 
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
-- Les créatures et les engins ne sont pas sauvegardés non plus : un avion laissé
-  au sol disparaît au rechargement. Le frapper le rend sous forme d'objet, et
-  l'inventaire, lui, est bien conservé.
+- Les objets tombés au sol ne sont pas sauvegardés : ce qui traîne encore à la
+  fermeture est perdu. Ils s'effacent de toute façon au bout de cinq minutes.
 - Les fluides ne s'écoulent pas : l'eau et la lave sont statiques, et ce qu'on
   verse au seau reste une source isolée.
 - Les formes non cubiques se limitent à deux boîtes par bloc : dalles, escaliers

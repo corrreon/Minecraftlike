@@ -11,10 +11,13 @@ import { chunkKey } from '../core/constants';
 import type { Dimension } from '../world/generator';
 
 const DB_NAME = 'voxelcraft';
-const DB_VERSION = 1;
+// Version 2 : ajout du magasin des entités. `onupgradeneeded` ne crée que ce
+// qui manque, les mondes existants sont donc relus sans conversion.
+const DB_VERSION = 2;
 const STORE_WORLDS = 'worlds';
 const STORE_CHUNKS = 'chunks';
 const STORE_PLAYER = 'players';
+const STORE_ENTITIES = 'entities';
 
 export interface WorldMeta {
   id: string;
@@ -38,6 +41,24 @@ export interface WorldMeta {
   returnPos?: [number, number, number];
   /** Le dragon de l'End a déjà été vaincu : il ne réapparaît pas. */
   dragonSlain?: boolean;
+}
+
+/**
+ * Créature ou engin sauvegardé. L'espèce est stockée par son nom et non par un
+ * indice : la liste des créatures a beaucoup bougé, et un indice aurait fait
+ * ressortir des chevaux en guise de zombies au moindre réordonnancement.
+ */
+export interface EntitySave {
+  kind: string;
+  x: number;
+  y: number;
+  z: number;
+  yaw: number;
+  health: number;
+  /** Mouton déjà tondu. */
+  shorn?: boolean;
+  /** Vitesse air d'un engin piloté. */
+  airspeed?: number;
 }
 
 export interface PlayerSave {
@@ -74,6 +95,7 @@ export async function openDatabase(): Promise<IDBDatabase | null> {
       if (!db.objectStoreNames.contains(STORE_WORLDS)) db.createObjectStore(STORE_WORLDS, { keyPath: 'id' });
       if (!db.objectStoreNames.contains(STORE_CHUNKS)) db.createObjectStore(STORE_CHUNKS);
       if (!db.objectStoreNames.contains(STORE_PLAYER)) db.createObjectStore(STORE_PLAYER);
+      if (!db.objectStoreNames.contains(STORE_ENTITIES)) db.createObjectStore(STORE_ENTITIES);
     };
     open.onsuccess = () => resolve(open.result);
     open.onerror = () => resolve(null);
@@ -89,9 +111,22 @@ export async function listWorlds(db: IDBDatabase | null): Promise<WorldMeta[]> {
 
 export async function deleteWorld(db: IDBDatabase | null, id: string): Promise<void> {
   if (!db) return;
-  const tx = db.transaction([STORE_WORLDS, STORE_CHUNKS, STORE_PLAYER], 'readwrite');
+  const tx = db.transaction([STORE_WORLDS, STORE_CHUNKS, STORE_PLAYER, STORE_ENTITIES], 'readwrite');
   tx.objectStore(STORE_WORLDS).delete(id);
   tx.objectStore(STORE_PLAYER).delete(id);
+  // Les entités sont rangées par dimension sous le même préfixe que les chunks.
+  const ents = tx.objectStore(STORE_ENTITIES);
+  const entRange = IDBKeyRange.bound(`${id}:`, `${id}:￿`);
+  const entCursor = ents.openKeyCursor(entRange);
+  await new Promise<void>((resolve) => {
+    entCursor.onsuccess = () => {
+      const c = entCursor.result;
+      if (!c) { resolve(); return; }
+      ents.delete(c.key);
+      c.continue();
+    };
+    entCursor.onerror = () => resolve();
+  });
   // Les clés de chunk sont préfixées par l'identifiant du monde.
   const store = tx.objectStore(STORE_CHUNKS);
   const range = IDBKeyRange.bound(`${id}:`, `${id}:￿`);
@@ -223,6 +258,32 @@ export class SaveManager {
       tx.oncomplete = () => resolve();
       tx.onerror = () => resolve();
     });
+  }
+
+  /**
+   * Écrit les créatures et les engins d'une dimension. Une liste vide efface
+   * l'entrée : un monde vidé de ses créatures ne doit pas les voir revenir.
+   */
+  async saveEntities(dimension: Dimension, list: EntitySave[]): Promise<void> {
+    if (!this.db) return;
+    const tx = this.db.transaction(STORE_ENTITIES, 'readwrite');
+    const store = tx.objectStore(STORE_ENTITIES);
+    const key = `${this.meta.id}:${dimension}`;
+    if (list.length === 0) store.delete(key);
+    else store.put(list, key);
+    await new Promise<void>((resolve) => {
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => resolve();
+    });
+  }
+
+  async loadEntities(dimension: Dimension): Promise<EntitySave[]> {
+    if (!this.db) return [];
+    const tx = this.db.transaction(STORE_ENTITIES, 'readonly');
+    const v = await req(
+      tx.objectStore(STORE_ENTITIES).get(`${this.meta.id}:${dimension}`) as IDBRequest<EntitySave[] | undefined>,
+    );
+    return v ?? [];
   }
 
   async loadPlayer(): Promise<PlayerSave | null> {
