@@ -62,8 +62,9 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   toutes les combinaisons. Elle et le portillon fermé montent plus haut que leur
   voxel : un enclos ne s'enjambe pas d'un saut.
 - **Avion** : un engin pilotable, fabriqué puis posé au sol. On monte à bord au
-  clic droit, et on vole là où l'on regarde — la caméra tient lieu de manche.
-  `Espace` met les gaz, `Maj` freine, et un badinier affiche la vitesse. Toute
+  clic droit, et on vole là où l'on regarde — la caméra tient lieu de manche,
+  le joystick au doigt. `Espace` met les gaz, `Maj` freine, et un badinier
+  affiche la vitesse. Toute
   la difficulté tient dans ce seul chiffre : au-dessus de la vitesse de
   décrochage l'avion tient sa trajectoire, en dessous la portance s'effondre au
   carré et il tombe. On n'en descend qu'une fois posé et à l'arrêt, et le
@@ -224,6 +225,11 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   lâcher d'objet et à la prise du bloc visé. La console remonte au-dessus du
   clavier virtuel et s'accompagne de ses boutons « envoyer » et « fermer », qui
   remplacent `Entrée` et `Échap`.
+- **En avion, le joystick devient le manche.** Au doigt, le pouce droit tient
+  les gaz et ne peut plus balayer l'écran pour viser ; le joystick, inutile en
+  vol, prend donc la commande de pilotage. Pousser vers le haut lève le nez.
+  Un **badinier** affiche la vitesse au-dessus de la barre rapide, et vire au
+  rouge sous la vitesse de décrochage.
 
 ---
 
@@ -241,6 +247,11 @@ Chaque raccourci a son équivalent au doigt : rien n'est réservé au clavier.
 | Casser un bloc / attaquer | clic gauche | `⛏` |
 | Poser / utiliser / ouvrir | clic droit | `▣` |
 | Allumer un cadre d'obsidienne | clic droit avec un briquet | `▣` avec un briquet |
+| Monter à cheval / à bord | clic droit sur l'animal ou l'engin | `▣` en le visant |
+| Descendre | `Maj` (posé et à l'arrêt pour un avion) | `⤓` |
+| Piloter un avion | regard souris | **joystick** — le pouce droit tient les gaz |
+| Mettre les gaz / freiner | `Espace` / `Maj` | `⤒` / `⤓` |
+| Grimper à une échelle | avancer vers elle, ou `Espace` | joystick vers elle, ou `⤒` |
 | Changer d'objet | molette, `1`-`9` | appui sur une case de la barre rapide |
 | Prendre le bloc visé | clic milieu | `⊕` |
 | Inventaire | `E` | `☰` |

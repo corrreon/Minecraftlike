@@ -68,6 +68,8 @@ import { mulberry32 } from '../world/noise';
 const MOB_TICK = 1.8;
 /** Vitesse de décrochage d'un avion, dupliquée ici pour l'affichage. */
 const PLANE_STALL_SPEED = 9;
+/** Sensibilité du manche de pilotage, en radians par seconde à fond de course. */
+const PLANE_STICK = 1.1;
 /** Plafond d'objets au sol, et durée au bout de laquelle ils s'effacent. */
 const MAX_DROPS = 320;
 const DROP_LIFETIME = 300;
@@ -1929,6 +1931,12 @@ export class Game {
     // seules la poussée et le frein restent au clavier. On n'en descend qu'une
     // fois posé — sauter en marche n'est pas une commande, c'est un accident.
     if (m.def.aircraft) {
+      // Au tactile, le pouce droit reste sur les gaz : il ne peut plus balayer
+      // l'écran pour viser. Le manche gauche, inutile en vol, devient donc la
+      // commande de pilotage — pousser en haut lève le nez.
+      if (st.moveX !== 0 || st.moveY !== 0) {
+        this.player.applyLook(st.moveX * PLANE_STICK * dt, st.moveY * PLANE_STICK * dt);
+      }
       m.driveYaw = this.player.yaw;
       m.drivePitch = this.player.pitch;
       m.driveJump = st.jump;
