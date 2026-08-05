@@ -643,6 +643,27 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
     for (let x = 3; x < 13; x++) { t.px(x, 5, rgb(0x6d5028), 255); t.pxHeight(x, 5, 0.7); }
   },
 
+  // Échelle : deux montants et des barreaux, le reste transparent — c'est ce
+  // vide qui la distingue d'une planche vue de loin.
+  ladder: (t, r) => {
+    t.clear();
+    const bois = rgb(0x9a7440);
+    const ombre = rgb(0x6d5028);
+    for (let y = 0; y < 16; y++) {
+      for (const x of [2, 3, 12, 13]) {
+        t.px(x, y, x === 3 || x === 13 ? ombre : bois, 255, 0.9 + r() * 0.2);
+        t.pxHeight(x, y, 0.85);
+      }
+    }
+    // Barreaux, un tous les quatre pixels : de loin on lit l'échelle à son pas.
+    for (const y of [1, 5, 9, 13]) {
+      for (let x = 3; x < 13; x++) {
+        t.px(x, y, bois, 255, 0.85 + r() * 0.2);
+        t.pxHeight(x, y, 0.6);
+      }
+    }
+  },
+
   // Lit : la tuile du dessus tourne avec l'orientation du bloc, l'oreiller est
   // donc toujours dessiné du même côté — celui de la tête.
   bed_head: (t, r) => {

@@ -54,7 +54,7 @@ import { PostFX, projectSun } from '../render/PostFX';
 import { Sky, computeSkyState, createSkyState, type SkyState } from '../render/Sky';
 import { ShadowMap } from '../render/ShadowMap';
 import { openDatabase, deleteWorld as dbDeleteWorld, listWorlds, SaveManager, type PlayerSave, type WorldMeta } from '../save/SaveManager';
-import { B, BLOCKS, BLOCK_BY_KEY, IS_SOLID, RenderKind, block as blockDef, type Facing } from '../world/blocks';
+import { B, BLOCKS, BLOCK_BY_KEY, FACINGS, IS_SOLID, RenderKind, block as blockDef, type Facing } from '../world/blocks';
 import { biomeDef } from '../world/biomes';
 import { ChunkState } from '../world/Chunk';
 import { World } from '../world/World';
@@ -1626,8 +1626,9 @@ export class Game {
       }
       this.player.addXp(def.hardness > 2.5 ? 2 : 0);
     }
-    // Support des blocs posés dessus (fleurs, torches, neige).
+    // Support des blocs posés dessus (fleurs, torches, neige) et à côté (échelles).
     this.dropUnsupported(hit.x, hit.y + 1, hit.z);
+    this.dropLadders(hit.x, hit.y, hit.z);
     this.applyGravityBlocks(hit.x, hit.y + 1, hit.z);
     // Un coffre/four détruit rend son contenu.
     const bkey = `${hit.x},${hit.y},${hit.z}`;
@@ -1759,6 +1760,7 @@ export class Game {
     // Porte et lit occupent deux cellules : leur pose a ses propres règles.
     if (item.key === 'oak_door') { this.placeDoor(nx, ny, nz); return; }
     if (item.key === 'red_bed') { this.placeBed(nx, ny, nz); return; }
+    if (item.key === 'ladder') { this.placeLadder(nx, ny, nz, hit); return; }
 
     // Une dalle se pose en bas ou en haut du voxel selon l'endroit visé.
     let placeId = item.block;
@@ -1963,6 +1965,60 @@ export class Game {
     this.audio.place('wool');
     this.heldView.swing = 1;
     if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+  }
+
+  /**
+   * Une échelle se plaque contre le mur qu'on a visé. Viser le sol ou le
+   * plafond ne dit rien du mur porteur : on cherche alors un appui autour,
+   * en commençant par le côté opposé au regard.
+   */
+  private placeLadder(x: number, y: number, z: number, hit: RaycastHit): void {
+    const from = (dx: number, dz: number): Facing | null =>
+      dz < 0 ? 'north' : dz > 0 ? 'south' : dx < 0 ? 'west' : dx > 0 ? 'east' : null;
+
+    // Le mur est du côté d'où vient la normale de la face visée.
+    let facing = from(-hit.nx, -hit.nz);
+    if (!facing) {
+      const view = this.viewFacing();
+      const order: Facing[] = [view, 'north', 'south', 'west', 'east'];
+      for (const f of order) {
+        const [dx, dz] = Game.STEP[f];
+        if (IS_SOLID[this.world.getBlock(x + dx, y, z + dz)]) { facing = f; break; }
+      }
+    }
+    if (!facing) {
+      this.hud.toast('Une échelle a besoin d’un mur.');
+      return;
+    }
+    const [dx, dz] = Game.STEP[facing];
+    if (!IS_SOLID[this.world.getBlock(x + dx, y, z + dz)]) {
+      this.hud.toast('Une échelle a besoin d’un mur.');
+      return;
+    }
+    this.setBlock(x, y, z, BLOCK_BY_KEY.get(`ladder_${facing}`)!.id);
+    this.audio.place('wood');
+    this.heldView.swing = 1;
+    if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+  }
+
+  /**
+   * Fait tomber les échelles qui s'appuyaient sur le bloc qu'on vient de
+   * casser. Sans ça elles resteraient collées au vide.
+   */
+  private dropLadders(x: number, y: number, z: number): void {
+    for (const f of FACINGS) {
+      const [dx, dz] = Game.STEP[f];
+      // Une échelle en (x-dx, y, z-dz) tournée vers `f` s'appuie sur (x,y,z).
+      const lx = x - dx, lz = z - dz;
+      const id = this.world.getBlock(lx, y, lz);
+      if (id <= 0 || blockDef(id).key !== `ladder_${f}`) continue;
+      this.setBlock(lx, y, lz, 0);
+      if (this.player.mode !== GameMode.Creative) {
+        for (const d of blockDrops(id, true, () => this.rnd())) {
+          this.spawnDrop(lx + 0.5, y + 0.5, lz + 0.5, makeStack(d.item, d.count));
+        }
+      }
+    }
   }
 
   /**

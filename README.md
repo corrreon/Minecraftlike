@@ -45,15 +45,16 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   et **coffres au trésor** enfouis sous les plages. Chaque chunk reconstruit
   intégralement la structure qui le touche et découpe ce qui dépasse : aucune
   couture quand on arrive par le bord.
-- **~240 blocs** : roches et variantes polies, minerais, quatre essences de
+- **~245 blocs** : roches et variantes polies, minerais, quatre essences de
   bois, verre, glace, blocs décoratifs, établi, four, coffre, TNT, sources de
   lumière, matériaux du Nether et de l'End, et une palette de construction
   complète — laine, **béton**, **terre cuite** et **verre teinté** dans les
   16 teintes, plus **10 familles de dalles** et **6 familles d'escaliers**
   orientés selon le regard à la pose.
 - **Menuiserie** : **porte** sur deux blocs qui s'ouvre et se ferme d'un bloc,
-  **portillon** qu'on franchit une fois ouvert, et **lit** qui passe la nuit et
-  fixe le point de réapparition. Tous trois s'orientent selon le regard.
+  **portillon** qu'on franchit une fois ouvert, **lit** qui passe la nuit et
+  fixe le point de réapparition, et **échelle** qui se plaque contre un mur.
+  Tous s'orientent selon le regard.
 - **Trois types de monde** au choix à la création : normal, **superplat** pour
   bâtir sans terrain qui gêne, et **oneblock**.
 
@@ -139,9 +140,9 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **170 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  **175 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
   de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
-  porte, portillon, lit, seau,
+  porte, portillon, lit, échelle, seau,
   TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
@@ -172,7 +173,10 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   écran de mort et réapparition.
 - **Physique** : collisions AABB par axe avec résolution dichotomique, nage,
   vol, accroupissement (qui empêche de tomber d'un rebord), saut automatique
-  optionnel, sable et gravier qui tombent.
+  optionnel, sable et gravier qui tombent. Sur une **échelle**, la verticale
+  devient pilotée : on monte en poussant vers elle ou en sautant, on tient sa
+  position en s'accroupissant, et lâcher les commandes fait glisser lentement
+  au lieu de tomber — sans dégâts de chute.
 - **Sauvegarde IndexedDB** : plusieurs mondes, seuls les blocs modifiés sont
   stockés (le terrain est reproductible depuis la graine), position, inventaire,
   armure, heure et temps de jeu ; sauvegarde automatique.
@@ -276,7 +280,7 @@ Quelques points de conception :
 - Les formes non cubiques se limitent à deux boîtes par bloc : dalles, escaliers
   et menuiserie passent, mais un muret ou une clôture, qui en demandent plus,
   restent hors de portée du mailleur.
-- Il ne reste que **14 identifiants de bloc libres** sur 256 : toute famille
+- Il ne reste que **10 identifiants de bloc libres** sur 256 : toute famille
   orientée supplémentaire demanderait de passer les identifiants sur 16 bits.
 - Les escaliers ne se posent qu'à l'endroit et les portes n'ont qu'un sens de
   battant : les variantes retournées ou à gonds inversés doubleraient le nombre

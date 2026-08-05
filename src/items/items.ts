@@ -95,6 +95,7 @@ for (const b of BLOCKS) {
   if (b.key === 'dragon_egg') continue;
   if (b.key.includes('_stairs_')) continue;
   if (b.key.startsWith('oak_door_') || b.key.startsWith('oak_fence_gate_') || b.key.startsWith('red_bed_')) continue;
+  if (b.key.startsWith('ladder_')) continue;
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -303,6 +304,13 @@ for (const [key, name] of STAIR_MATERIALS) {
       ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`red_bed_${facing}_${half}`)!.id, bed);
     }
   }
+
+  const ladder = item('ladder', {
+    name: 'Échelle', block: BLOCK_BY_KEY.get('ladder_north')!.id, icon: 'block', fuel: 8,
+  });
+  for (const facing of FACINGS) {
+    ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(`ladder_${facing}`)!.id, ladder);
+  }
 }
 
 // Seaux : la seule façon de transporter un fluide, et donc de figer la lave en
@@ -434,6 +442,7 @@ export function itemCategory(def: ItemDef): ItemCategory {
   }
   // Menuiserie : ce sont des mécanismes, on les ouvre et on les ferme.
   if (key === 'oak_door' || key === 'oak_fence_gate' || key === 'red_bed') return 'redstone';
+  if (key === 'ladder') return 'construction';
   if (NATURE_KEYS.has(key)) return 'nature';
   const b = BLOCKS[def.block];
   if (b && (b.render === RenderKind.Cross || key.endsWith('_leaves') || key.endsWith('_log') || key.endsWith('_sapling'))) {

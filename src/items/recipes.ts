@@ -190,6 +190,9 @@ RECIPES.push(shaped(['SPS', 'SPS'], { S: 'stick', P: PLANKS }, 'oak_fence_gate')
 // le lit est rouge quoi qu'il arrive.
 RECIPES.push(shaped(['WWW', 'PPP'], { W: WOOL, P: PLANKS }, 'red_bed'));
 
+// Sept bâtons en échelle donnent trois échelons.
+RECIPES.push(shaped(['S S', 'SSS', 'S S'], { S: 'stick' }, 'ladder', 3));
+
 // --- Seaux -----------------------------------------------------------------
 RECIPES.push(shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket'));
 

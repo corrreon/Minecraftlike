@@ -12,7 +12,7 @@ import {
   WORLD_HEIGHT,
 } from '../core/constants';
 import type { InputState } from '../core/Input';
-import { BLOCKS, IS_SOLID, RENDER_KIND, RenderKind } from '../world/blocks';
+import { BLOCKS, IS_CLIMBABLE, IS_SOLID, RENDER_KIND, RenderKind } from '../world/blocks';
 import type { World } from '../world/World';
 import { moveBox, type Box } from './physics';
 
@@ -30,6 +30,9 @@ const FLY_SPRINT = 22;
 const JUMP_VELOCITY = 8.4;
 const SWIM_SPEED = 3.1;
 const WATER_DRAG = 0.82;
+/** Vitesse d'escalade d'une échelle, et vitesse de glissade quand on lâche. */
+const CLIMB_SPEED = 3.2;
+const SLIDE_SPEED = 1.6;
 
 export interface PlayerStats {
   health: number;
@@ -84,6 +87,8 @@ export class Player {
   autoJump = false;
   /** En selle : la monture décide de la position, la physique du joueur se tait. */
   riding = false;
+  /** Le joueur touche une échelle : il peut monter au lieu de tomber. */
+  onLadder = false;
 
   get eyeHeight(): number {
     return this.sneaking ? PLAYER_CROUCH_EYE : PLAYER_EYE;
@@ -237,9 +242,24 @@ export class Player {
 
   private walkStep(dt: number, wishX: number, wishZ: number, input: InputState): void {
     const target = this.sneaking ? SNEAK_SPEED : this.sprinting ? SPRINT_SPEED : WALK_SPEED;
-    const control = this.onGround ? 12 : 2.6;
+    const control = this.onGround || this.onLadder ? 12 : 2.6;
     this.velocity.x += (wishX * target - this.velocity.x) * Math.min(1, control * dt);
     this.velocity.z += (wishZ * target - this.velocity.z) * Math.min(1, control * dt);
+
+    // Sur une échelle, la verticale est pilotée, pas subie : on monte en
+    // sautant ou en poussant vers l'échelle, on tient bon en s'accroupissant,
+    // et sinon on redescend doucement. La gravité ne s'applique plus.
+    //
+    // La montée doit pouvoir démarrer les pieds au sol, sinon on reste bloqué
+    // au bas de l'échelle sans moyen de s'y engager.
+    if (this.onLadder) {
+      const pousse = wishX !== 0 || wishZ !== 0;
+      this.velocity.y = input.jump || pousse ? CLIMB_SPEED
+        : this.sneaking || this.onGround ? 0
+          : -SLIDE_SPEED;
+      this.fallDistance = 0;
+      return;
+    }
 
     if (input.jump && this.onGround) {
       this.velocity.y = JUMP_VELOCITY;
@@ -309,6 +329,26 @@ export class Player {
     this.inWater = isLiquid(feet) && BLOCKS[feet].key === 'water';
     this.inLava = isLiquid(feet) && BLOCKS[feet].key === 'lava';
     this.submerged = isLiquid(eyes);
+
+    // Échelle : il suffit que la boîte du joueur en touche une, à n'importe
+    // quelle hauteur. On balaie les cases occupées plutôt que la seule colonne
+    // centrale, sinon on décroche dès qu'on s'écarte d'un demi-bloc.
+    this.onLadder = false;
+    const half = PLAYER_WIDTH / 2;
+    const x0 = Math.floor(this.position.x - half + 1e-6);
+    const x1 = Math.floor(this.position.x + half - 1e-6);
+    const z0 = Math.floor(this.position.z - half + 1e-6);
+    const z1 = Math.floor(this.position.z + half - 1e-6);
+    const y0 = Math.floor(this.position.y + 1e-6);
+    const y1 = Math.floor(this.position.y + this.height - 1e-6);
+    for (let y = y0; y <= y1 && !this.onLadder; y++) {
+      for (let z = z0; z <= z1 && !this.onLadder; z++) {
+        for (let x = x0; x <= x1; x++) {
+          const b = world.getBlock(x, y, z);
+          if (b > 0 && IS_CLIMBABLE[b]) { this.onLadder = true; break; }
+        }
+      }
+    }
   }
 
   private updateVitals(dt: number, world: World): void {

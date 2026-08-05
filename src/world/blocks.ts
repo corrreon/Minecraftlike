@@ -88,6 +88,8 @@ export interface BlockDef {
    * dont le motif a un sens — l'oreiller d'un lit pointe vers la tête.
    */
   rotTop: number;
+  /** On y grimpe : le contact remplace la chute par une montée contrôlée. */
+  climbable: boolean;
 }
 
 /** Boîte élémentaire d'une forme, en fraction de voxel. */
@@ -134,6 +136,7 @@ interface BlockOptions {
   maxY?: number;
   boxes?: Box[];
   rotTop?: number;
+  climbable?: boolean;
 }
 
 function define(key: string, o: BlockOptions): BlockDef {
@@ -175,6 +178,7 @@ function define(key: string, o: BlockOptions): BlockDef {
     maxY: o.maxY ?? 1,
     boxes: o.boxes,
     rotTop: o.rotTop ?? 0,
+    climbable: o.climbable ?? false,
     textures: t,
     layers: { top: tex(t.top), bottom: tex(t.bottom), side: tex(t.side) },
   };
@@ -717,6 +721,14 @@ const PANEL: Record<Facing, Box> = {
   west: [0, 0, 0, T, 1, 1],
   east: [1 - T, 0, 0, 1, 1, 1],
 };
+const LT = 2 / 16; // épaisseur d'une échelle
+/** Panneau d'échelle, plaqué contre le mur porteur. */
+const LADDER_PANEL: Record<Facing, Box> = {
+  north: [0, 0, 0, 1, 1, LT],
+  south: [0, 0, 1 - LT, 1, 1, 1],
+  west: [0, 0, 0, LT, 1, 1],
+  east: [1 - LT, 0, 0, 1, 1, 1],
+};
 /** Quart de tour dans le sens horaire : la porte ouverte se plaque sur ce côté. */
 const OPEN_OF: Record<Facing, Facing> = { north: 'east', east: 'south', south: 'west', west: 'north' };
 
@@ -797,6 +809,31 @@ for (const facing of FACINGS) {
   }
 }
 
+/**
+ * Échelle : un panneau ajouré plaqué contre le mur qui la porte. `facing`
+ * désigne le côté où se trouve ce mur — la même convention que la porte.
+ *
+ * Elle ne bloque pas le passage : on entre dedans, et c'est justement le
+ * contact qui déclenche l'escalade.
+ */
+for (const facing of FACINGS) {
+  define(`ladder_${facing}`, {
+    name: 'Échelle',
+    textures: 'ladder',
+    layer: RenderLayer.Cutout,
+    solid: false,
+    opaque: false,
+    lightFilter: 0,
+    climbable: true,
+    hardness: 0.4,
+    tool: 'axe',
+    sound: 'wood',
+    flammable: true,
+    drop: 'ladder',
+    boxes: [LADDER_PANEL[facing]],
+  });
+}
+
 export const AIR = 0;
 export const BLOCK_COUNT = BLOCKS.length;
 
@@ -824,6 +861,8 @@ export const SHAPE_BOXES = new Float32Array(BLOCK_COUNT * MAX_BOXES * 6);
 export const TEX_LAYERS = new Uint16Array(BLOCK_COUNT * 3);
 /** Quarts de tour de la texture du dessus, 0..3. */
 export const ROT_TOP = new Uint8Array(BLOCK_COUNT);
+/** Le bloc se grimpe (échelle). */
+export const IS_CLIMBABLE = new Uint8Array(BLOCK_COUNT);
 
 for (const b of BLOCKS) {
   IS_OPAQUE[b.id] = b.opaque ? 1 : 0;
@@ -847,6 +886,7 @@ for (const b of BLOCKS) {
   TEX_LAYERS[b.id * 3 + 1] = b.layers.bottom;
   TEX_LAYERS[b.id * 3 + 2] = b.layers.side;
   ROT_TOP[b.id] = b.rotTop;
+  IS_CLIMBABLE[b.id] = b.climbable ? 1 : 0;
 }
 
 export const TEXTURE_NAMES: readonly string[] = TEXTURE_ORDER;
