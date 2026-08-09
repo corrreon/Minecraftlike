@@ -176,8 +176,13 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   après un rechargement du monde.
 - **Four** fonctionnel : combustion, progression de cuisson, table de fusion
   (minerais, verre, briques, cuisson des viandes) ; **coffres** de 27 cases.
-- **Seaux** : le seau se remplit d'eau ou de lave et se vide où l'on vise.
-  L'eau versée sur la lave la **fige en obsidienne**, ce qui rend le portail du
+- **Seaux** : le seau se remplit d'eau ou de lave et se vide où l'on vise. Le
+  rayon d'interaction ordinaire ignore les fluides — c'est ce qui évite de
+  cliquer sur de l'eau en construisant —, le seau a donc sa propre visée.
+- **L'eau coule** : versée, elle cherche le bas d'abord, tombe de rebord en
+  rebord, s'étale jusqu'à quatre blocs de sa source et remplit les creux.
+  Creuser une tranchée au bord d'une mare y fait entrer l'eau. Toute lave
+  touchée par la coulée se **fige en obsidienne**, ce qui rend le portail du
   Nether constructible sans dépendre d'un coffre de structure — il ne reste
   qu'à l'allumer au briquet.
 - **Créatures** : cochon, vache, mouton (tondable), poule, **cheval**, **piglin**, zombie, squelette, creeper,
@@ -330,8 +335,13 @@ Quelques points de conception :
   ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
 - Les objets tombés au sol ne sont pas sauvegardés : ce qui traîne encore à la
   fermeture est perdu. Ils s'effacent de toute façon au bout de cinq minutes.
-- Les fluides ne s'écoulent pas : l'eau et la lave sont statiques, et ce qu'on
-  verse au seau reste une source isolée.
+- La coulée d'eau n'a pas de niveaux : Minecraft en compte sept, ce qui donne
+  la lame qui s'amincit au bord d'une nappe, mais coûterait sept identifiants
+  de bloc par fluide et il n'en reste que deux. Les bords sont donc francs.
+- Une nappe ne se retire pas quand on récupère sa source : sans niveaux, rien
+  ne dit à une case d'eau d'où elle vient. Il faut la repuiser au seau.
+- **La lave, elle, ne coule pas** : elle reste statique. C'est délibéré — une
+  lave qui s'étale brûlerait maisons et bêtes sans prévenir.
 - Les formes non cubiques se limitent à deux boîtes par bloc : dalles, escaliers
   et menuiserie passent, mais un muret ou une clôture, qui en demandent plus,
   restent hors de portée du mailleur.

@@ -73,6 +73,18 @@ const PLANE_STICK = 1.1;
 /** Plafond d'objets au sol, et durée au bout de laquelle ils s'effacent. */
 const MAX_DROPS = 320;
 const DROP_LIFETIME = 300;
+/**
+ * Coulée d'eau. Minecraft distingue sept niveaux d'écoulement, ce qui donne
+ * la lame qui s'amincit au bord d'une nappe — mais sept identifiants de bloc
+ * par fluide, et il n'en reste que deux sur les 256. La coulée est donc faite
+ * de blocs pleins : l'eau descend, s'étale, remplit les creux et franchit les
+ * rebords, sans le biseau du bord.
+ */
+/** Portée horizontale d'une coulée depuis sa source, en blocs. */
+const FLOW_REACH = 4;
+/** Plafond de cases par coulée : une flaque ne doit pas devenir un océan. */
+const FLOW_BUDGET = 120;
+
 /** Les six voisins d'une case, pour les tests de contact fluide. */
 const NEIGHBOURS: readonly (readonly [number, number, number])[] = [
   [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1],
@@ -1736,6 +1748,7 @@ export class Game {
     this.dropUnsupported(hit.x, hit.y + 1, hit.z);
     this.dropLadders(hit.x, hit.y, hit.z);
     this.untieFrom(hit.x, hit.y, hit.z, creative);
+    this.stirWater(hit.x, hit.y, hit.z);
     this.applyGravityBlocks(hit.x, hit.y + 1, hit.z);
     // Un coffre/four détruit rend son contenu.
     const bkey = `${hit.x},${hit.y},${hit.z}`;
@@ -1822,6 +1835,76 @@ export class Game {
         }
       }
       this.dropUnsupported(x, y + 1, z);
+    }
+  }
+
+  /**
+   * Répand l'eau depuis une case. Elle cherche le bas d'abord — une colonne qui
+   * tombe ne s'étale pas —, puis s'élargit jusqu'à sa portée. Toute lave
+   * touchée se fige en obsidienne.
+   */
+  private spreadWater(sx: number, sy: number, sz: number): void {
+    const file: [number, number, number, number][] = [[sx, sy, sz, 0]];
+    const vus = new Set<string>([`${sx},${sy},${sz}`]);
+    let pose = 0;
+
+    /** La case peut-elle recevoir de l'eau ? */
+    const libre = (x: number, y: number, z: number): boolean => {
+      const b = this.world.getBlock(x, y, z);
+      if (b < 0 || b === B.water) return false;
+      return b === 0 || blockDef(b).replaceable;
+    };
+    const empiler = (x: number, y: number, z: number, d: number): void => {
+      const k = `${x},${y},${z}`;
+      if (vus.has(k)) return;
+      vus.add(k);
+      file.push([x, y, z, d]);
+    };
+
+    while (file.length > 0 && pose < FLOW_BUDGET) {
+      const [x, y, z, d] = file.shift()!;
+
+      // Vers le bas d'abord.
+      if (y > 1) {
+        const sous = this.world.getBlock(x, y - 1, z);
+        if (sous === B.lava) {
+          this.setBlock(x, y - 1, z, B.obsidian);
+          continue;
+        }
+        if (libre(x, y - 1, z)) {
+          this.setBlock(x, y - 1, z, B.water);
+          pose++;
+          // La chute ne consomme pas la portée : en bas, la nappe repart entière.
+          empiler(x, y - 1, z, 0);
+          continue;
+        }
+      }
+
+      if (d >= FLOW_REACH) continue;
+      for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+        const nx = x + dx, nz = z + dz;
+        if (this.world.getBlock(nx, y, nz) === B.lava) {
+          this.setBlock(nx, y, nz, B.obsidian);
+          continue;
+        }
+        if (!libre(nx, y, nz)) continue;
+        this.setBlock(nx, y, nz, B.water);
+        pose++;
+        empiler(nx, y, nz, d + 1);
+        if (pose >= FLOW_BUDGET) break;
+      }
+    }
+  }
+
+  /**
+   * Relance les coulées autour d'une case qu'on vient de vider : creuser un
+   * canal au bord d'une mare doit y faire entrer l'eau.
+   */
+  private stirWater(x: number, y: number, z: number): void {
+    for (const [dx, dy, dz] of NEIGHBOURS) {
+      if (dy < 0) continue; // l'eau ne remonte pas
+      if (this.world.getBlock(x + dx, y + dy, z + dz) !== B.water) continue;
+      this.spreadWater(x + dx, y + dy, z + dz);
     }
   }
 
@@ -2166,6 +2249,7 @@ export class Game {
       }
     }
     this.setBlock(tx, ty, tz, key === 'water_bucket' ? B.water : B.lava);
+    if (key === 'water_bucket') this.spreadWater(tx, ty, tz);
     swap('bucket');
     this.audio.place('liquid');
     return true;
