@@ -118,6 +118,13 @@ export class Game {
   private mount: Mob | null = null;
   /** Les entités écrites ont déjà été relues pour la dimension courante. */
   private entitiesRestored = false;
+  /**
+   * Une action d'état a déjà eu lieu pendant cet appui. Poser des blocs se
+   * répète tant qu'on maintient le clic — c'est ce qui permet de bâtir en
+   * glissant — mais basculer une porte ou remplir un seau, non : un appui d'une
+   * demi-seconde remplissait le seau puis le revidait aussitôt.
+   */
+  private useLocked = false;
   private leashLines!: LineSegments;
   private leashBuf = new Float32Array(0);
   private entityGroup = new Group();
@@ -373,6 +380,22 @@ export class Game {
       n++;
     }
     return n;
+  }
+
+  /** Rejoue un clic droit sur ce que le joueur vise réellement. */
+  debugUseAimed(): void {
+    const eye = this.player.eyePosition.clone();
+    const dir = this.player.forward.clone().normalize();
+    const reach = this.player.mode === GameMode.Creative ? REACH_CREATIVE : REACH_SURVIVAL;
+    this.useItem(raycast(this.world, eye, dir, reach));
+  }
+
+  /** Bloc actuellement visé par le rayon d'interaction, fluides compris. */
+  debugAimed(): { key: string; x: number; y: number; z: number } | null {
+    const eye = this.player.eyePosition.clone();
+    const dir = this.player.forward.clone().normalize();
+    const h = raycast(this.world, eye, dir, REACH_CREATIVE, true);
+    return h ? { key: blockDef(h.block).key, x: h.x, y: h.y, z: h.z } : null;
   }
 
   /** État des laisses : qui est tenu, qui est noué, et où. */
@@ -1600,9 +1623,11 @@ export class Game {
     }
 
     // --- Utilisation ---
-    if (st.use && this.placeCooldown <= 0) {
+    if (st.use && !this.useLocked && this.placeCooldown <= 0) {
       this.placeCooldown = 0.22;
       this.useItem(hit);
+    } else if (!st.use) {
+      this.useLocked = false;
     }
   }
 
@@ -1827,12 +1852,13 @@ export class Game {
       const eye = this.player.eyePosition.clone();
       const dir = this.player.forward.clone().normalize();
       const aimed = this.pickMob(eye, dir, REACH_SURVIVAL);
-      if (aimed?.def.rideable) { this.mountMob(aimed); return; }
+      if (aimed?.def.rideable) { this.useLocked = true; this.mountMob(aimed); return; }
     }
 
     // Interaction avec un bloc « conteneur ».
     if (hit && !this.player.sneaking) {
       const key = blockDef(hit.block).key;
+      this.useLocked = true;
       if (key === 'crafting_table') { this.openInventory('crafting'); return; }
       if (key === 'furnace') { this.openContainer(hit, 'furnace'); return; }
       if (key === 'chest') { this.openContainer(hit, 'chest'); return; }
@@ -1842,6 +1868,9 @@ export class Game {
       if (key.startsWith('oak_fence_gate_')) { this.toggleGate(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
       if (key.startsWith('red_bed_')) { this.sleep(hit.x, hit.y, hit.z); return; }
       if (key.startsWith('oak_trapdoor_')) { this.toggleTrapdoor(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
+      // Aucune de ces interactions n'a eu lieu : l'appui reste disponible pour
+      // poser un bloc, geste qui, lui, se répète.
+      this.useLocked = false;
     }
 
     // Le briquet allume un cadre d'obsidienne : c'est la porte du Nether.
@@ -1862,6 +1891,7 @@ export class Game {
 
     // Laisse : on attrape la bête visée, ou on relâche celle qu'on tient.
     if (item.key === 'lead') {
+      this.useLocked = true;
       // La barrière passe avant la bête : une vache qui suit son maître se
       // trouve souvent entre lui et le piquet, et on relâcherait ce qu'on
       // voulait justement attacher.
@@ -1900,6 +1930,7 @@ export class Game {
 
     // L'avion n'est pas un bloc : il apparaît devant soi, prêt à décoller.
     if (item.key === 'plane' && hit) {
+      this.useLocked = true;
       this.addMob('plane', hit.x + hit.nx + 0.5, hit.y + hit.ny, hit.z + hit.nz + 0.5);
       this.audio.click();
       this.heldView.swing = 1;
@@ -1910,7 +1941,7 @@ export class Game {
 
     // Seaux : puiser, verser, et figer la lave en obsidienne.
     if (item.key === 'bucket' || item.key === 'water_bucket' || item.key === 'lava_bucket') {
-      if (this.useBucket(item.key, hit)) return;
+      if (this.useBucket(item.key, hit)) { this.useLocked = true; return; }
     }
 
     // Nourriture.
@@ -2084,7 +2115,14 @@ export class Game {
    *
    * @returns vrai si le seau a servi (auquel cas rien d'autre ne doit suivre).
    */
-  private useBucket(key: string, hit: RaycastHit | null): boolean {
+  private useBucket(key: string, aimed: RaycastHit | null): boolean {
+    // Le rayon d'interaction ordinaire ignore les fluides — c'est ce qui évite
+    // de « cliquer sur de l'eau » en construisant. Un seau, lui, ne vise que ça :
+    // il lui faut sa propre visée, sans quoi il ne peut jamais être rempli.
+    const eye = this.player.eyePosition.clone();
+    const dir = this.player.forward.clone().normalize();
+    const reach = this.player.mode === GameMode.Creative ? REACH_CREATIVE : REACH_SURVIVAL;
+    const hit = raycast(this.world, eye, dir, reach, true) ?? aimed;
     if (!hit) return false;
     const creative = this.player.mode === GameMode.Creative;
     const swap = (to: string): void => {
