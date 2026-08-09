@@ -59,6 +59,8 @@ export interface EntitySave {
   shorn?: boolean;
   /** Vitesse air d'un engin piloté. */
   airspeed?: number;
+  /** Bloc auquel la bête est attachée par une laisse. */
+  post?: [number, number, number];
 }
 
 export interface PlayerSave {

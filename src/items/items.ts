@@ -334,6 +334,8 @@ item('golden_carrot', { name: 'Carotte dorée', maxStack: 16, color: 0xf0c020, i
 
 // L'avion n'est pas un bloc : l'objet fait apparaître l'engin devant soi.
 item('plane', { name: 'Avion', maxStack: 1, color: 0xd23c30, icon: 'tool' });
+// La laisse : on attache une bête, elle suit, puis on la noue à une barrière.
+item('lead', { name: 'Laisse', maxStack: 16, color: 0xb8a082, icon: 'plain' });
 
 // Seaux : la seule façon de transporter un fluide, et donc de figer la lave en
 // obsidienne pour bâtir un portail sans dépendre d'un coffre de structure.

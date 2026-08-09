@@ -118,6 +118,8 @@ export class Game {
   private mount: Mob | null = null;
   /** Les entités écrites ont déjà été relues pour la dimension courante. */
   private entitiesRestored = false;
+  private leashLines!: LineSegments;
+  private leashBuf = new Float32Array(0);
   private entityGroup = new Group();
   private particles!: ParticleSystem;
   private weather = new Weather();
@@ -256,6 +258,16 @@ export class Game {
     this.breakOverlay.renderOrder = 6;
     this.scene.add(this.breakOverlay);
 
+    // Cordes des laisses : un seul objet, dont on réécrit les sommets à chaque
+    // image. En créer un par bête ferait autant d'appels de dessin.
+    this.leashLines = new LineSegments(
+      new BufferGeometry(),
+      new LineBasicMaterial({ color: 0x6b5a3e, transparent: true, opacity: 0.9 }),
+    );
+    this.leashLines.frustumCulled = false;
+    this.leashLines.visible = false;
+    this.scene.add(this.leashLines);
+
     this.heldView = { group: new Group(), current: -1, swing: 0 };
     this.scene.add(this.heldView.group);
     this.playerModel = this.buildPlayerModel();
@@ -350,10 +362,34 @@ export class Game {
     return this.persist(false);
   }
 
+  /** Attache toutes les bêtes proches à un piquet : mise en scène des tests. */
+  debugTie(x: number, y: number, z: number): number {
+    let n = 0;
+    for (const m of this.mobs) {
+      if (m.def.hostile || m.def.aircraft) continue;
+      if (m.position.distanceTo(new Vector3(x + 0.5, y, z + 0.5)) > 8) continue;
+      m.leashed = false;
+      m.leashPost = { x, y, z };
+      n++;
+    }
+    return n;
+  }
+
+  /** État des laisses : qui est tenu, qui est noué, et où. */
+  debugLeashes(): { kind: string; leashed: boolean; post: number[] | null }[] {
+    return this.mobs.filter((m) => !m.dead && (m.leashed || m.leashPost))
+      .map((m) => ({ kind: m.kind, leashed: m.leashed, post: m.leashPost ? [m.leashPost.x, m.leashPost.y, m.leashPost.z] : null }));
+  }
+
   /** Relevé des créatures vivantes : espèce et position. */
-  debugMobs(): { kind: string; position: number[] }[] {
+  debugMobs(): { kind: string; position: number[]; health: number; burning: number }[] {
     return this.mobs.filter((m) => !m.dead)
-      .map((m) => ({ kind: m.kind, position: m.position.toArray().map((v) => +v.toFixed(2)) }));
+      .map((m) => ({
+        kind: m.kind,
+        position: m.position.toArray().map((v) => +v.toFixed(2)),
+        health: m.health,
+        burning: +m.burning.toFixed(2),
+      }));
   }
 
   /** Vitesse air de l'engin piloté, ou 0. */
@@ -1259,6 +1295,8 @@ export class Game {
     this.updateBlockEntities(dt);
     if (this.settings.particles) this.particles.update(dt, this.skyState.dayFactor);
 
+    this.updateLeashes();
+
     // Caméra et modèle porté.
     this.updateCamera(dt);
     this.updateHeldView(dt);
@@ -1672,6 +1710,7 @@ export class Game {
     // Support des blocs posés dessus (fleurs, torches, neige) et à côté (échelles).
     this.dropUnsupported(hit.x, hit.y + 1, hit.z);
     this.dropLadders(hit.x, hit.y, hit.z);
+    this.untieFrom(hit.x, hit.y, hit.z, creative);
     this.applyGravityBlocks(hit.x, hit.y + 1, hit.z);
     // Un coffre/four détruit rend son contenu.
     const bkey = `${hit.x},${hit.y},${hit.z}`;
@@ -1782,8 +1821,9 @@ export class Game {
     const stackHeld = this.inventory.selectedStack;
 
     // Monter une créature montable visée : ça passe avant tout le reste, sinon
-    // on poserait un bloc dans le cheval.
-    if (!this.mount) {
+    // on poserait un bloc dans le cheval. Une laisse en main dit le contraire :
+    // on veut attacher la bête, pas l'enfourcher.
+    if (!this.mount && stackHeld?.item.key !== 'lead') {
       const eye = this.player.eyePosition.clone();
       const dir = this.player.forward.clone().normalize();
       const aimed = this.pickMob(eye, dir, REACH_SURVIVAL);
@@ -1819,6 +1859,44 @@ export class Game {
 
     if (!stackHeld) return;
     const item = stackHeld.item;
+
+    // Laisse : on attrape la bête visée, ou on relâche celle qu'on tient.
+    if (item.key === 'lead') {
+      // La barrière passe avant la bête : une vache qui suit son maître se
+      // trouve souvent entre lui et le piquet, et on relâcherait ce qu'on
+      // voulait justement attacher.
+      if (hit && blockDef(hit.block).key.startsWith('oak_fence')) {
+        let n = 0;
+        for (const m of this.mobs) {
+          if (!m.leashed) continue;
+          m.leashed = false;
+          m.leashPost = { x: hit.x, y: hit.y, z: hit.z };
+          n++;
+        }
+        if (n > 0) {
+          this.hud.toast(n === 1 ? 'Attachée à la barrière.' : `${n} bêtes attachées à la barrière.`);
+          this.audio.place('wood');
+          this.heldView.swing = 1;
+          return;
+        }
+      }
+      const eye = this.player.eyePosition.clone();
+      const dir = this.player.forward.clone().normalize();
+      const cible = this.pickMob(eye, dir, REACH_SURVIVAL);
+      if (cible && !cible.def.hostile && !cible.def.aircraft) {
+        if (cible.leashed || cible.leashPost) {
+          cible.leashed = false;
+          cible.leashPost = null;
+          this.hud.toast('Bête relâchée.');
+        } else {
+          cible.leashed = true;
+          this.hud.toast('Au bout de la laisse.');
+        }
+        this.audio.click();
+        this.heldView.swing = 1;
+        return;
+      }
+    }
 
     // L'avion n'est pas un bloc : il apparaît devant soi, prêt à décoller.
     if (item.key === 'plane' && hit) {
@@ -2734,6 +2812,7 @@ export class Game {
     }
     if (held?.item.durability) this.inventory.damageSelected(1);
     if (killed) {
+      m.lootDropped = true;
       for (const d of m.rollDrops()) this.spawnDrop(d.x, d.y, d.z, d.stack);
       this.player.addXp(m.def.xp);
       if (m.def.orbit) this.onDragonSlain(m);
@@ -2845,7 +2924,16 @@ export class Game {
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
       const dist = m.position.distanceTo(this.player.position);
-      if (m.dead || (dist > 110 && !m.def.orbit)) {
+      // Un engin et une bête attachée appartiennent au joueur : ils ne
+      // s'évaporent pas parce qu'il s'est éloigné. Le reste, si.
+      const permanent = m.def.aircraft === true || m.leashed || m.leashPost !== null;
+      if (m.dead || (dist > 110 && !m.def.orbit && !permanent)) {
+        // Morte autrement que sous les coups du joueur — noyée, brûlée, tombée
+        // dans le vide — la bête laisse quand même son butin.
+        if (m.dead && !m.lootDropped) {
+          m.lootDropped = true;
+          for (const d of m.rollDrops()) this.spawnDrop(d.x, d.y, d.z, d.stack);
+        }
         this.entityGroup.remove(m.group);
         m.dispose();
         this.mobs.splice(i, 1);
@@ -2865,6 +2953,16 @@ export class Game {
         (mob) => this.explode(mob.position.x, mob.position.y, mob.position.z, 3.2),
       );
       if (Math.random() < dt * 0.06) this.audio.mobAmbient(m.kind);
+      // Une créature en feu crache des flammes : sans particules, on ne
+      // comprendrait pas pourquoi elle perd de la vie.
+      if (m.burning > 0 && this.settings.particles && Math.random() < dt * 14) {
+        this.particles.puff(
+          m.position.x + (Math.random() - 0.5) * m.def.width,
+          m.position.y + Math.random() * m.def.height,
+          m.position.z + (Math.random() - 0.5) * m.def.width,
+          Math.random() < 0.5 ? 0xffa32a : 0xe0521a, 1,
+        );
+      }
     }
 
     for (let i = this.drops.length - 1; i >= 0; i--) {
@@ -3003,7 +3101,7 @@ export class Game {
   private trySpawnDimensionMob(): void {
     const nether = this.dimension === 'nether';
     const kinds: MobKind[] = nether
-      ? ['blaze', 'blaze', 'enderman', 'zombie', 'bloop']
+      ? ['piglin', 'piglin', 'blaze', 'blaze', 'enderman', 'zombie', 'bloop']
       : ['enderman', 'enderman', 'bloop'];
     const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const def = MOBS[kind];
@@ -3043,6 +3141,55 @@ export class Game {
     return true;
   }
 
+  /**
+   * Redessine les cordes : de chaque bête attachée vers sa barrière, ou vers la
+   * main du joueur quand il la tient.
+   */
+  private updateLeashes(): void {
+    const attaches: Mob[] = [];
+    for (const m of this.mobs) if (!m.dead && (m.leashed || m.leashPost)) attaches.push(m);
+    if (attaches.length === 0) { this.leashLines.visible = false; return; }
+
+    const need = attaches.length * 6;
+    if (this.leashBuf.length !== need) {
+      this.leashBuf = new Float32Array(need);
+      this.leashLines.geometry.setAttribute('position', new BufferAttribute(this.leashBuf, 3));
+    }
+    const hand = this.player.eyePosition;
+    let k = 0;
+    for (const m of attaches) {
+      this.leashBuf[k++] = m.position.x;
+      this.leashBuf[k++] = m.position.y + m.def.height * 0.8;
+      this.leashBuf[k++] = m.position.z;
+      if (m.leashPost) {
+        this.leashBuf[k++] = m.leashPost.x + 0.5;
+        this.leashBuf[k++] = m.leashPost.y + 0.9;
+        this.leashBuf[k++] = m.leashPost.z + 0.5;
+      } else {
+        this.leashBuf[k++] = hand.x;
+        this.leashBuf[k++] = hand.y - 0.35;
+        this.leashBuf[k++] = hand.z;
+      }
+    }
+    (this.leashLines.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    this.leashLines.geometry.setDrawRange(0, attaches.length * 2);
+    this.leashLines.visible = true;
+  }
+
+  /**
+   * Libère les bêtes attachées au bloc qu'on vient de casser, et rend leur
+   * laisse. Sans ça elles resteraient retenues par un piquet disparu.
+   */
+  private untieFrom(x: number, y: number, z: number, creative: boolean): void {
+    const laisse = ITEM_BY_KEY.get('lead');
+    for (const m of this.mobs) {
+      const p = m.leashPost;
+      if (!p || p.x !== x || p.y !== y || p.z !== z) continue;
+      m.leashPost = null;
+      if (laisse && !creative) this.spawnDrop(x + 0.5, y + 0.5, z + 0.5, makeStack(laisse, 1));
+    }
+  }
+
   private addMob(kind: MobKind, x: number, y: number, z: number): Mob {
     const m = new Mob(kind, x, y, z, this.env, (Math.random() * 1e9) | 0);
     this.mobs.push(m);
@@ -3069,6 +3216,9 @@ export class Game {
         health: m.health,
         shorn: m.shorn || undefined,
         airspeed: m.def.aircraft ? +m.airspeed.toFixed(2) : undefined,
+        // Seule la laisse nouée se garde : « tenue en main » n'a plus de sens
+        // une fois la partie fermée.
+        post: m.leashPost ? [m.leashPost.x, m.leashPost.y, m.leashPost.z] : undefined,
       });
     }
     return out;
@@ -3083,6 +3233,7 @@ export class Game {
       m.health = Math.min(m.def.health, Math.max(1, e.health));
       if (e.shorn) m.shorn = true;
       if (e.airspeed !== undefined) m.airspeed = e.airspeed;
+      if (e.post) m.leashPost = { x: e.post[0], y: e.post[1], z: e.post[2] };
     }
   }
 

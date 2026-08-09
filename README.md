@@ -157,9 +157,10 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **180 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  **181 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
   de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
   porte, portillon, barrière, lit, échelle, trappe, seau, lucky bloc, avion,
+  laisse,
   TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
@@ -179,7 +180,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   L'eau versée sur la lave la **fige en obsidienne**, ce qui rend le portail du
   Nether constructible sans dépendre d'un coffre de structure — il ne reste
   qu'à l'allumer au briquet.
-- **Créatures** : cochon, vache, mouton (tondable), poule, **cheval**, zombie, squelette, creeper,
+- **Créatures** : cochon, vache, mouton (tondable), poule, **cheval**, **piglin**, zombie, squelette, creeper,
   araignée, **villageois**, **idiot du village**, **golem de fer**, **kraken**,
   **bloop**, **braise**, **enderman** et le **dragon de l'End** — modèles
   articulés animés (ailes battantes et queue ondulante pour le dragon), IA
@@ -188,12 +189,22 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   terrain, le golem prend pour cible la créature hostile la plus proche et
   riposte si on le frappe, le kraken nage et s'échoue hors de l'eau, le bloop
   n'avance que par bonds, la braise ne se pose jamais et l'enderman se dérobe
-  d'un pas de côté dès qu'on le touche. Le **cheval se monte** d'un clic droit :
+  d'un pas de côté dès qu'on le touche, et le **piglin** garde le Nether, épée
+  d'or au poing. Le **cheval se monte** d'un clic droit :
   il obéit alors au clavier comme à la manette tactile, court plus vite qu'un
   sprint, saute sur commande, et on en descend en s'accroupissant.
 - **Survie** : vie, faim et saturation, souffle sous l'eau, dégâts de chute, de
   lave, de cactus et de famine, régénération, armure et réduction de dégâts,
   écran de mort et réapparition.
+- **Le feu et la lave** : une créature tombée dans la lave prend feu, brûle
+  encore un moment après en être sortie, et n'est éteinte que par l'eau. Morte
+  dans les flammes, elle rend sa **viande déjà cuite**. Toute mort — brûlée,
+  noyée, tombée dans le vide — laisse désormais son butin, et pas seulement
+  celles qu'on abat soi-même.
+- **Laisses** : on attache une bête paisible, elle suit à cinq blocs et la corde
+  la rappelle si elle traîne ; un clic droit sur une **barrière** l'y noue, et
+  elle y reste à brouter. Casser le piquet la libère et rend la laisse. La corde
+  est visible entre la bête et son point d'attache.
 - **Cueillette et élevage** : les feuillages de chêne lâchent parfois une
   **pomme**, les **carottes** poussent dans les champs des villages, et les
   **cisailles** tondent un mouton pour sa laine sans avoir à l'abattre. La
@@ -257,6 +268,7 @@ Chaque raccourci a son équivalent au doigt : rien n'est réservé au clavier.
 | Poser / utiliser / ouvrir | clic droit | `▣` |
 | Allumer un cadre d'obsidienne | clic droit avec un briquet | `▣` avec un briquet |
 | Monter à cheval / à bord | clic droit sur l'animal ou l'engin | `▣` en le visant |
+| Attacher une bête / la nouer | clic droit avec une laisse, puis sur une barrière | `▣` avec une laisse |
 | Descendre | `Maj` (posé et à l'arrêt pour un avion) | `⤓` |
 | Piloter un avion | regard souris | **joystick** — le pouce droit tient les gaz |
 | Mettre les gaz / freiner | `Espace` / `Maj` | `⤒` / `⤓` |

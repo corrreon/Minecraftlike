@@ -29,7 +29,7 @@ export type MobKind =
   | 'pig' | 'cow' | 'sheep' | 'chicken' | 'horse'
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
-  | 'blaze' | 'enderman' | 'ender_dragon'
+  | 'blaze' | 'enderman' | 'ender_dragon' | 'piglin'
   | 'plane';
 
 interface MobPart {
@@ -105,7 +105,7 @@ const M = (
 // Les dimensions sont exprimées en blocs (1 bloc = 1 unité).
 export const MOBS: Record<MobKind, MobDef> = {
   pig: M('Cochon', false, 10, 1.5, 0.9, 0.9, 0, 0, 1,
-    [{ key: 'porkchop', min: 1, max: 3 }],
+    [{ key: 'porkchop', min: 1, max: 3, cookable: 'cooked_porkchop' }],
     [
       { name: 'body', size: [0.62, 0.5, 1.0], offset: [0, 0.62, 0], color: 0xe8a0a0 },
       { name: 'head', size: [0.5, 0.5, 0.44], offset: [0, 0.72, -0.66], color: 0xdd8f92, anim: 'head' },
@@ -120,7 +120,7 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'l4', size: [0.22, 0.38, 0.22], offset: [0.18, 0.19, 0.32], color: 0xd08a8a, anim: 'legBR' },
     ]),
   cow: M('Vache', false, 10, 1.3, 0.9, 1.4, 0, 0, 1,
-    [{ key: 'beef', min: 1, max: 3 }, { key: 'leather', min: 0, max: 2 }],
+    [{ key: 'beef', min: 1, max: 3, cookable: 'cooked_beef' }, { key: 'leather', min: 0, max: 2 }],
     [
       { name: 'body', size: [0.72, 0.6, 1.2], offset: [0, 0.95, 0], color: 0x4a3524 },
       { name: 'head', size: [0.5, 0.5, 0.5], offset: [0, 1.15, -0.82], color: 0x3a2a1c, anim: 'head' },
@@ -135,7 +135,7 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'l4', size: [0.24, 0.66, 0.24], offset: [0.22, 0.33, 0.4], color: 0x3f2c1e, anim: 'legBR' },
     ]),
   sheep: M('Mouton', false, 8, 1.4, 0.9, 1.3, 0, 0, 1,
-    [{ key: 'mutton', min: 1, max: 2 }, { key: 'white_wool', min: 1, max: 1 }],
+    [{ key: 'mutton', min: 1, max: 2, cookable: 'cooked_mutton' }, { key: 'white_wool', min: 1, max: 1 }],
     [
       { name: 'body', size: [0.78, 0.68, 1.1], offset: [0, 0.9, 0], color: 0xf0efe8 },
       { name: 'head', size: [0.44, 0.44, 0.46], offset: [0, 1.06, -0.72], color: 0xcbb9a4, anim: 'head' },
@@ -167,7 +167,7 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'l4', size: [0.24, 0.78, 0.24], offset: [0.26, 0.39, 0.52], color: 0x82522a, anim: 'legBR' },
     ], { rideable: true }),
   chicken: M('Poule', false, 4, 1.6, 0.5, 0.7, 0, 0, 1,
-    [{ key: 'chicken', min: 1, max: 1 }, { key: 'feather', min: 0, max: 2 }],
+    [{ key: 'chicken', min: 1, max: 1, cookable: 'cooked_chicken' }, { key: 'feather', min: 0, max: 2 }],
     [
       { name: 'body', size: [0.34, 0.34, 0.42], offset: [0, 0.42, 0], color: 0xf2f2f2 },
       { name: 'head', size: [0.24, 0.24, 0.2], offset: [0, 0.66, -0.24], color: 0xf6f6f6, anim: 'head' },
@@ -389,6 +389,27 @@ export const MOBS: Record<MobKind, MobDef> = {
     ],
     { hops: true }),
 
+  // Piglin : le garde du Nether. Il flaire l'or et charge sans discuter.
+  piglin: M('Piglin', true, 16, 2.6, 0.62, 1.85, 4, 22, 6,
+    [{ key: 'gold_ingot', min: 0, max: 2 }, { key: 'porkchop', min: 1, max: 2, cookable: 'cooked_porkchop' }],
+    [
+      { name: 'head', size: [0.52, 0.52, 0.52], offset: [0, 1.6, 0], color: 0xe8a08c, anim: 'head' },
+      { name: 'museau', size: [0.3, 0.22, 0.16], offset: [0, 1.52, -0.32], color: 0xd8867a, anim: 'head' },
+      { name: 'oreilleL', size: [0.1, 0.24, 0.16], offset: [-0.3, 1.68, 0], color: 0xd8867a, anim: 'head' },
+      { name: 'oreilleR', size: [0.1, 0.24, 0.16], offset: [0.3, 1.68, 0], color: 0xd8867a, anim: 'head' },
+      { name: 'eyeL', size: [0.09, 0.09, 0.06], offset: [-0.13, 1.68, -0.27], color: 0x1a1210, anim: 'head' },
+      { name: 'eyeR', size: [0.09, 0.09, 0.06], offset: [0.13, 1.68, -0.27], color: 0x1a1210, anim: 'head' },
+      { name: 'defenseL', size: [0.06, 0.1, 0.06], offset: [-0.11, 1.44, -0.3], color: 0xf0eadc, anim: 'head' },
+      { name: 'defenseR', size: [0.06, 0.1, 0.06], offset: [0.11, 1.44, -0.3], color: 0xf0eadc, anim: 'head' },
+      { name: 'body', size: [0.55, 0.62, 0.3], offset: [0, 1.02, 0], color: 0x8a6a3a },
+      { name: 'ceinture', size: [0.58, 0.12, 0.33], offset: [0, 0.76, 0], color: 0xd8ab2e },
+      { name: 'armL', size: [0.17, 0.6, 0.17], offset: [-0.36, 1.05, 0], color: 0xe09a86, anim: 'armL' },
+      { name: 'armR', size: [0.17, 0.6, 0.17], offset: [0.36, 1.05, 0], color: 0xe09a86, anim: 'armR' },
+      { name: 'lame', size: [0.09, 0.5, 0.09], offset: [0.36, 0.62, -0.2], color: 0xf7d84c, anim: 'armR' },
+      { name: 'legL', size: [0.19, 0.72, 0.19], offset: [-0.14, 0.36, 0], color: 0x6a5230, anim: 'legFL' },
+      { name: 'legR', size: [0.19, 0.72, 0.19], offset: [0.14, 0.36, 0], color: 0x6a5230, anim: 'legFR' },
+    ]),
+
   // Avion. Vitesse nulle au repos : garé, il ne bouge pas d'un pouce, et son
   // pilotage ne passe pas par l'IA mais par `updateAircraft`.
   plane: M('Avion', false, 40, 0, 1.3, 1.7, 0, 0, 0, [],
@@ -426,6 +447,11 @@ const PLANE_BRAKE = 13;
 const PLANE_DRAG = 2.2;
 /** En dessous de cette vitesse, la portance s'efface et l'avion décroche. */
 const PLANE_STALL = 9;
+
+/** Longueur d'une laisse, en blocs : au-delà, la bête est rappelée. */
+export const LEASH_RANGE = 5;
+/** Au-delà, la bête est ramenée d'un coup au bout de sa corde. */
+const LEASH_SNAP = 14;
 
 export function coloredBox(w: number, h: number, d: number, color: number): BoxGeometry {
   const g = new BoxGeometry(w, h, d);
@@ -478,6 +504,21 @@ export class Mob {
   private hopTimer = 0;
   /** Mouton déjà tondu : il ne rendra plus de laine. */
   shorn = false;
+  /** Secondes de combustion restantes. La lave allume, l'eau éteint. */
+  burning = 0;
+  /** Tenue en laisse par le joueur : elle le suit. */
+  leashed = false;
+  /**
+   * Point d'attache d'une laisse nouée, en coordonnées de bloc. La créature
+   * reste dans son rayon.
+   */
+  leashPost: { x: number; y: number; z: number } | null = null;
+  /** Accumulateur des dégâts du feu, pour n'en infliger qu'un par seconde. */
+  private burnTick = 0;
+  /** La créature est morte en brûlant : sa viande sort cuite. */
+  private diedBurning = false;
+  /** Son butin a déjà été répandu : on ne le rend pas deux fois. */
+  lootDropped = false;
   /** Montée par le joueur : elle obéit aux commandes plutôt qu'à son IA. */
   ridden = false;
   /** Commande du cavalier : direction souhaitée dans le repère du monde, et saut. */
@@ -627,6 +668,39 @@ export class Mob {
           onDamagePlayer(d.damage);
         }
       }
+    } else if (this.leashPost || this.leashed) {
+      // Au bout de la laisse : la bête vaque librement dans son rayon, et se
+      // fait rappeler dès qu'elle le dépasse.
+      const ancre = this.leashPost
+        ? { x: this.leashPost.x + 0.5, z: this.leashPost.z + 0.5 }
+        : { x: playerPos.x, z: playerPos.z };
+      const ax = ancre.x - this.position.x;
+      const az = ancre.z - this.position.z;
+      const longueur = Math.hypot(ax, az);
+      // Trop distancée, la bête serait perdue : la corde la ramène d'un coup.
+      // Sans ce rappel, une vache lente décroche dès qu'on marche vite.
+      if (longueur > LEASH_SNAP) {
+        this.position.x = ancre.x - (ax / longueur) * LEASH_RANGE * 0.6;
+        this.position.z = ancre.z - (az / longueur) * LEASH_RANGE * 0.6;
+        this.velocity.set(0, 0, 0);
+      }
+      if (longueur > LEASH_RANGE) {
+        wishX = ax / longueur;
+        wishZ = az / longueur;
+        this.yaw = Math.atan2(wishX, wishZ);
+      } else {
+        this.wanderTimer -= dt;
+        if (this.wanderTimer <= 0) {
+          this.wanderTimer = 2 + this.rnd() * 4;
+          this.wanderMove = this.rnd() < 0.5;
+          this.wanderYaw += (this.rnd() - 0.5) * 2.4;
+        }
+        if (this.wanderMove) {
+          this.yaw = this.wanderYaw;
+          wishX = Math.sin(this.wanderYaw) * 0.35;
+          wishZ = Math.cos(this.wanderYaw) * 0.35;
+        }
+      }
     } else if (!d.aircraft) {
       // Errance. Un engin garé, lui, ne bouge pas tout seul.
       this.wanderTimer -= dt;
@@ -649,6 +723,24 @@ export class Mob {
       this.blinkPending = false;
       this.blinkCooldown = 1.4;
       this.blink(world);
+    }
+
+    // --- Feu ---
+    // La lave met le feu ; l'eau l'éteint. Le compte à rebours survit à la
+    // sortie du bain : une créature qui s'échappe de la lave brûle encore.
+    const auxPieds = blockAt(world, this.position.x, this.position.y + 0.2, this.position.z);
+    if (auxPieds === B.lava) this.burning = 6;
+    if (this.burning > 0) {
+      this.burning -= dt;
+      if (auxPieds === B.water) {
+        this.burning = 0;
+      } else {
+        this.burnTick += dt;
+        while (this.burnTick >= 1) {
+          this.burnTick -= 1;
+          if (this.hurt(2)) { this.diedBurning = true; this.dead = true; return; }
+        }
+      }
     }
 
     // --- Physique ---
@@ -727,7 +819,9 @@ export class Mob {
     voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
     (this.material.uniforms.uLight.value as Color).copy(lightColor);
     const flashing = this.kind === 'creeper' && this.fuse >= 0 ? (Math.sin(this.fuse * 26) * 0.5 + 0.5) * 0.9 : 0;
-    this.material.uniforms.uFlash.value = Math.max(this.hurtFlash, flashing);
+    // Une créature en feu vacille : c'est ce qui la rend lisible de loin.
+    const flammes = this.burning > 0 ? 0.45 + Math.sin(this.age * 18) * 0.2 : 0;
+    this.material.uniforms.uFlash.value = Math.max(this.hurtFlash, flashing, flammes);
   }
 
   /**
@@ -913,7 +1007,8 @@ export class Mob {
     for (const d of this.def.drops) {
       const n = d.min + Math.floor(this.rnd() * (d.max - d.min + 1));
       if (n <= 0) continue;
-      const def = itemOf(d.key);
+      // Morte dans les flammes, la bête rend sa viande déjà cuite.
+      const def = itemOf(this.diedBurning && d.cookable ? d.cookable : d.key);
       out.push({ x: this.position.x, y: this.position.y + 0.5, z: this.position.z, stack: makeStack(def, n) });
     }
     return out;
@@ -1007,6 +1102,11 @@ function blockUnder(world: World, p: Vector3): number {
 function isLiquid(world: World, x: number, y: number, z: number): boolean {
   const b = world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
   return b > 0 && RENDER_KIND[b] === RenderKind.Liquid;
+}
+
+/** Identifiant du bloc à une position flottante. */
+function blockAt(world: World, x: number, y: number, z: number): number {
+  return world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z));
 }
 
 /** Couleur représentative d'un objet, utilisée par les entités « objet au sol ». */
