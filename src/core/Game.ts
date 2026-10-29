@@ -2395,7 +2395,12 @@ export class Game {
     const id = ouverte
       ? BLOCK_BY_KEY.get('oak_trapdoor_closed')!.id
       : BLOCK_BY_KEY.get(`oak_trapdoor_open_${this.viewFacing()}`)!.id;
-    if (!ouverte && this.blocksPlayer(x, y, z, id)) return;
+    // Refermée sur le joueur, elle le coincerait dans le plancher : il faut
+    // d'abord sortir la tête du trou. (Ouverte, elle ne gêne jamais.)
+    if (ouverte && this.blocksPlayer(x, y, z, id)) {
+      this.hud.toast('La trappe se refermerait sur vous.');
+      return;
+    }
     this.setBlock(x, y, z, id);
     this.audio.place('wood');
   }

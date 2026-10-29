@@ -2,7 +2,7 @@
 
 import { Vector3 } from 'three';
 import { WORLD_HEIGHT } from '../core/constants';
-import { IS_GATE, IS_SOLID, MAX_BOXES, SHAPE_BOXES, SHAPE_COUNT, RENDER_KIND, RenderKind } from '../world/blocks';
+import { IS_CLIMBABLE, IS_GATE, IS_SOLID, MAX_BOXES, SHAPE_BOXES, SHAPE_COUNT, RENDER_KIND, RenderKind } from '../world/blocks';
 import { fenceConnects } from '../world/mesher';
 import type { World } from '../world/World';
 
@@ -214,9 +214,59 @@ export interface RaycastHit {
 }
 
 const hitPoint = new Vector3();
+const shapeNormal: [number, number, number] = [0, 0, 0];
+
+/**
+ * Entrée du rayon dans les boîtes du bloc posé en (x, y, z).
+ * Renvoie la distance d'entrée — 0 si l'origine est déjà dedans — et écrit la
+ * normale de la face franchie dans `shapeNormal`, ou -1 si le rayon passe à
+ * côté de toutes les boîtes.
+ */
+function enterShape(
+  id: number, x: number, y: number, z: number,
+  origin: Vector3, direction: Vector3, maxDistance: number,
+): number {
+  const base = [x, y, z];
+  const from = [origin.x, origin.y, origin.z];
+  const dir = [direction.x, direction.y, direction.z];
+  let best = -1;
+  for (let k = 0; k < SHAPE_COUNT[id] && k < MAX_BOXES; k++) {
+    const o = (id * MAX_BOXES + k) * 6;
+    let near = -Infinity, far = Infinity, axis = -1;
+    let rate = false;
+    for (let a = 0; a < 3; a++) {
+      const lo = base[a] + SHAPE_BOXES[o + a];
+      const hi = base[a] + SHAPE_BOXES[o + a + 3];
+      if (dir[a] === 0) {
+        if (from[a] < lo || from[a] > hi) { rate = true; break; }
+        continue;
+      }
+      let t1 = (lo - from[a]) / dir[a];
+      let t2 = (hi - from[a]) / dir[a];
+      if (t1 > t2) { const s = t1; t1 = t2; t2 = s; }
+      if (t1 > near) { near = t1; axis = a; }
+      if (t2 < far) far = t2;
+    }
+    if (rate || near > far || far < 0) continue;
+    const t = Math.max(0, near);
+    if (t > maxDistance || (best >= 0 && t >= best)) continue;
+    best = t;
+    shapeNormal[0] = shapeNormal[1] = shapeNormal[2] = 0;
+    // Origine déjà dans la boîte : aucune face franchie, comme pour le voxel de départ.
+    if (near > 0) shapeNormal[axis] = dir[axis] > 0 ? -1 : 1;
+  }
+  return best;
+}
 
 /**
  * Parcours DDA d'une grille de voxels (Amanatides & Woo).
+ *
+ * Une échelle n'est touchée que si le rayon traverse réellement son panneau :
+ * le reste de son voxel se vise au travers. Sans ça, grimpé dessus, on visait
+ * l'échelle dans laquelle on se tient — jamais la trappe au-dessus, et un
+ * clic gauche cassait l'échelle au lieu du bloc regardé. Les autres blocs se
+ * visent toujours sur tout leur voxel : un portillon ouvert, réduit à ses
+ * montants, serait sinon presque impossible à refermer.
  * @param includeFluids inclure l'eau et la lave dans les cibles
  */
 export function raycast(
@@ -258,7 +308,14 @@ export function raycast(
         const targetable = includeFluids
           ? kind !== RenderKind.None
           : kind === RenderKind.Cube || kind === RenderKind.Cross || kind === RenderKind.Fence;
-        if (targetable) {
+        if (targetable && IS_CLIMBABLE[b]) {
+          const entree = enterShape(b, x, y, z, origin, direction, maxDistance);
+          if (entree >= 0) {
+            hitPoint.copy(direction).multiplyScalar(entree).add(origin);
+            const [hx, hy, hz] = shapeNormal;
+            return { x, y, z, block: b, nx: hx, ny: hy, nz: hz, distance: entree, point: hitPoint.clone() };
+          }
+        } else if (targetable) {
           hitPoint.copy(direction).multiplyScalar(t).add(origin);
           return { x, y, z, block: b, nx, ny, nz, distance: t, point: hitPoint.clone() };
         }
