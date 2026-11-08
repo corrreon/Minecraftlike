@@ -264,8 +264,8 @@ export class Game {
       settings: this.settings,
       applySettings: () => this.applySettings(),
       listWorlds: () => listWorlds(this.db),
-      createWorld: (name, seed, mode, flat) => void this.createWorld(name, seed, mode, flat),
-      playWorld: (meta) => void this.startWorld(meta),
+      createWorld: (name, seed, mode, flat) => void this.createWorld(name, seed, mode, flat).catch((e) => this.loadFailed(e)),
+      playWorld: (meta) => void this.startWorld(meta).catch((e) => this.loadFailed(e)),
       deleteWorld: (id) => dbDeleteWorld(this.db, id),
       resume: () => this.closeScreen(),
       quitToMenu: () => void this.quitToMenu(),
@@ -691,6 +691,8 @@ export class Game {
     this.world = new World(seed);
     this.structGen = kind === 'normal' || kind === 'nether' ? new TerrainGenerator(seed, kind) : null;
     this.pool = new WorkerPool(seed, kind);
+    this.pool.onFatal = (msg) => this.onWorkersDead(msg);
+    this.loadingSince = performance.now();
     this.particles = new ParticleSystem(this.world);
     this.scene.add(this.particles.mesh);
 
@@ -794,6 +796,34 @@ export class Game {
     this.camera.aspect = w / Math.max(1, h);
     this.camera.updateProjectionMatrix();
     if (this.post) this.post.setSize(w, h, dpr);
+  }
+
+  /** Une erreur à l'ouverture d'un monde s'affiche au lieu de figer l'écran. */
+  private loadFailed(e: unknown): void {
+    console.error(e);
+    this.setLoading(true, `Impossible d’ouvrir ce monde : ${(e as Error)?.message ?? e}. Recharge la page.`);
+  }
+
+  /** Début de l'attente du terrain, pour signaler un chargement qui traîne. */
+  private loadingSince = 0;
+
+  /**
+   * Les workers n'ont pas pu démarrer : presque toujours une page restée
+   * ouverte pendant une mise à jour du jeu, dont les scripts ont disparu du
+   * serveur. Recharger la page récupère la nouvelle version ; on ne le tente
+   * qu'une fois pour ne pas boucler si la cause est ailleurs.
+   */
+  private onWorkersDead(msg: string): void {
+    console.error('[workers]', msg);
+    let tried = false;
+    try { tried = sessionStorage.getItem('voxelcraft-reload') === '1'; } catch { /* stockage indisponible */ }
+    if (!tried) {
+      try { sessionStorage.setItem('voxelcraft-reload', '1'); } catch { /* idem */ }
+      this.setLoading(true, 'Nouvelle version du jeu : rechargement…');
+      void this.persist(true).finally(() => location.reload());
+      return;
+    }
+    this.setLoading(true, 'Le générateur de terrain ne démarre pas. Recharge la page (ou vide le cache du navigateur).');
   }
 
   private setLoading(active: boolean, label: string): void {
@@ -1313,6 +1343,18 @@ export class Game {
 
     // Attente du chargement initial du terrain sous le joueur.
     if (!this.worldReady) {
+      // Position corrompue (NaN, hors du monde) : on repart du point d'apparition
+      // plutôt que d'attendre un chunk qui n'existera jamais.
+      const p = this.player.position;
+      if (!Number.isFinite(p.x) || !Number.isFinite(p.y) || !Number.isFinite(p.z) || Math.abs(p.x) > 3e7 || Math.abs(p.z) > 3e7) {
+        p.set(this.spawnPoint.x || 0.5, WORLD_HEIGHT - 4, this.spawnPoint.z || 0.5);
+        this.player.velocity.set(0, 0, 0);
+      }
+      const waited = (performance.now() - this.loadingSince) / 1000;
+      if (waited > 20 && Math.floor(waited) % 5 === 0) {
+        const err = this.pool.lastError ? ` (erreur : ${this.pool.lastError})` : '';
+        this.setLoading(true, `Génération du monde… c’est long : si rien ne bouge, recharge la page${err}.`);
+      }
       this.chunks.setCenter(this.player.position.x, this.player.position.z);
       this.chunks.update();
       this.world.processLighting(60000);
@@ -1322,6 +1364,7 @@ export class Game {
         else if (this.worldType === 'oneblock') this.placeOnOneblock();
         else if (this.dimension === 'overworld') this.placePlayerOnGround();
         this.worldReady = true;
+        try { sessionStorage.removeItem('voxelcraft-reload'); } catch { /* stockage indisponible */ }
         // Les créatures de la dimension reviennent une fois le terrain là :
         // les faire naître dans du vide les ferait tomber à travers le monde.
         if (!this.entitiesRestored) {

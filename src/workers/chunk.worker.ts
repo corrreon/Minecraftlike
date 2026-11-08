@@ -16,6 +16,19 @@ let gen: TerrainGenerator | null = null;
 
 self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
   const msg = ev.data;
+  // Une exception ici ne doit jamais laisser une tâche sans réponse : le jeu
+  // l'attendrait indéfiniment, et l'écran de chargement ne finirait jamais.
+  try {
+    handle(msg);
+  } catch (err) {
+    console.error('[worker]', err);
+    if (msg.type !== 'init') {
+      (self as DedicatedWorkerGlobalScope).postMessage({ type: 'error', job: msg.job, message: String((err as Error)?.message ?? err) });
+    }
+  }
+};
+
+function handle(msg: WorkerRequest): void {
   switch (msg.type) {
     case 'init':
       gen = new TerrainGenerator(msg.seed, msg.worldType ?? 'normal');
@@ -64,4 +77,4 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
       break;
     }
   }
-};
+}
