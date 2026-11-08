@@ -13,7 +13,7 @@ export class Chunk {
   readonly key: string;
   /** Bits 1/2/4/8 : bord -X / +X / -Z / +Z modifié depuis le dernier remaillage. */
   borderDirty = 0;
-  blocks: Uint8Array;
+  blocks: Uint16Array;
   /** Nibble haut = lumière du ciel, nibble bas = lumière de bloc. */
   light: Uint8Array;
   biomes: Uint8Array;
@@ -35,7 +35,7 @@ export class Chunk {
     this.cx = cx;
     this.cz = cz;
     this.key = chunkKey(cx, cz);
-    this.blocks = new Uint8Array(CHUNK_VOLUME);
+    this.blocks = new Uint16Array(CHUNK_VOLUME);
     this.light = new Uint8Array(CHUNK_VOLUME);
     this.biomes = new Uint8Array(LAYER);
     this.height = new Uint8Array(LAYER);

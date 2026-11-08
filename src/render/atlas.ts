@@ -33,6 +33,13 @@ type RGB = [number, number, number];
 
 const rgb = (hex: number): RGB => [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
 const clamp255 = (v: number) => (v < 0 ? 0 : v > 255 ? 255 : v | 0);
+/** Couleur TSL (teinte en degrés) : pratique pour les dégradés arc-en-ciel. */
+const hsl = (h: number, sat: number, l: number): RGB => {
+  const k = (n: number) => (n + h / 30) % 12;
+  const a = sat * Math.min(l, 1 - l);
+  const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, 9 - k(n), 1));
+  return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
+};
 
 class Tile {
   readonly data = new Uint8Array(STRIDE);
@@ -674,6 +681,149 @@ const PAINTERS: Record<string, (t: Tile, rnd: () => number) => void> = {
     ];
     for (const [x, y] of marque) { t.px(x, y, rgb(0x3a2c06), 255); t.pxHeight(x, y, 0.15); }
   },
+
+  // --- Coin gamer ------------------------------------------------------------
+  // Plastique noir mat : la coque de tout le matériel.
+  pc_dark: (t, r) => grainy(t, rgb(0x1c1d22), r, 0.08, 3),
+  chair_black: (t, r) => { grainy(t, rgb(0x1a1a1e), r, 0.12, 5); speckle(t, rgb(0x2c2c32), r, 30, 1.2); },
+  // Assise baquet : cuir noir, surpiqûres et bande rouge au centre.
+  chair_seat: (t, r) => {
+    grainy(t, rgb(0x1a1a1e), r, 0.12, 5);
+    for (let y = 0; y < 16; y++) for (let x = 6; x < 10; x++) { t.px(x, y, rgb(0xd0202a), 255, 0.9 + r() * 0.15); t.pxHeight(x, y, 0.75); }
+    for (let y = 0; y < 16; y += 2) { t.px(5, y, rgb(0x888890)); t.px(10, y, rgb(0x888890)); }
+  },
+  // Dossier : deux bandes rouges qui montent, et l'appui-tête percé.
+  chair_back: (t, r) => {
+    grainy(t, rgb(0x1a1a1e), r, 0.12, 5);
+    for (let y = 0; y < 16; y++) {
+      for (const x of [3, 4, 11, 12]) { t.px(x, y, rgb(0xd0202a), 255, 0.9 + r() * 0.15); t.pxHeight(x, y, 0.8); }
+    }
+    for (let x = 6; x < 10; x++) for (let y = 2; y < 4; y++) { t.px(x, y, rgb(0x050506)); t.pxHeight(x, y, 0); }
+    for (let x = 6; x < 10; x++) t.px(x, 10, rgb(0xd0202a));
+  },
+  // Façade du PC : bandeaux arc-en-ciel et bouton d'allumage.
+  pc_front: (t, r) => {
+    grainy(t, rgb(0x16171b), r, 0.08, 3);
+    for (let y = 1; y < 15; y++) {
+      const c = hsl((y / 14) * 300, 1, 0.55);
+      t.px(2, y, c); t.px(13, y, c);
+      t.pxHeight(2, y, 1); t.pxHeight(13, y, 1);
+    }
+    for (let x = 5; x < 11; x++) for (let y = 3; y < 13; y++) t.px(x, y, rgb(0x0c0c0f), 255, 0.9 + r() * 0.3);
+    t.px(7, 14, rgb(0x3aa0ff)); t.px(8, 14, rgb(0x3aa0ff));
+  },
+  // Vitre latérale : trois ventilateurs aux anneaux lumineux.
+  pc_side: (t, r) => {
+    grainy(t, rgb(0x101217), r, 0.06, 3);
+    for (let i = 0; i < 16; i++) { t.px(i, 0, rgb(0x2a2c33)); t.px(i, 15, rgb(0x2a2c33)); t.px(0, i, rgb(0x2a2c33)); t.px(15, i, rgb(0x2a2c33)); }
+    const fans: [number, number, number][] = [[8, 3.5, 190], [8, 8, 280], [8, 12.5, 330]];
+    for (const [cx, cy, hue] of fans) {
+      for (let y = 0; y < TILE; y++) {
+        for (let x = 0; x < TILE; x++) {
+          const d = Math.hypot(x / S - cx + 0.25, y / S - cy + 0.25);
+          if (d > 1.1 && d < 2) t.set(x, y, hsl(hue + d * 20, 1, 0.58));
+          else if (d <= 1.1) t.set(x, y, rgb(0x2a2a30), 255, 0.8 + r() * 0.4);
+        }
+      }
+    }
+  },
+  pc_top: (t, r) => {
+    grainy(t, rgb(0x1c1d22), r, 0.08, 3);
+    for (let y = 2; y < 14; y += 2) for (let x = 2; x < 14; x++) { t.px(x, y, rgb(0x08080a)); t.pxHeight(x, y, 0); }
+  },
+  // Écran : un paysage de jeu, collines vertes sous un ciel violet.
+  monitor_screen: (t, r) => {
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        const bord = x === 0 || x === 15 || y === 0 || y === 15;
+        let c: RGB;
+        if (bord) c = rgb(0x0e0e12);
+        else if (y < 8) c = hsl(260 - y * 8, 0.8, 0.45 + y * 0.03);
+        else c = y < 10 + Math.round(Math.sin(x * 0.8) * 1.5) ? rgb(0x2e9a3c) : rgb(0x6a4a2a);
+        t.px(x, y, c, 255, bord ? 1 : 0.95 + r() * 0.1);
+        t.pxHeight(x, y, bord ? 0.6 : 0.2);
+      }
+    }
+    // Soleil et petit personnage.
+    t.px(11, 3, rgb(0xffe066)); t.px(12, 3, rgb(0xffe066)); t.px(11, 4, rgb(0xffe066)); t.px(12, 4, rgb(0xffe066));
+    t.px(5, 7, rgb(0xf0c090)); t.px(5, 8, rgb(0x3060d0));
+  },
+  // Clavier rétroéclairé : touches noires cernées d'arc-en-ciel.
+  keyboard_rgb: (t, r) => {
+    grainy(t, rgb(0x111114), r, 0.05, 3);
+    for (let y = 1; y < 15; y += 3) {
+      for (let x = 1; x < 15; x += 2) {
+        t.px(x, y, rgb(0x2a2a2e), 255, 0.9 + r() * 0.2);
+        t.px(x, y + 1, hsl(x * 22 + y * 10, 1, 0.55));
+        t.pxHeight(x, y, 1);
+      }
+    }
+  },
+  // Console : socle noir, et l'écran entre deux manettes bleue et rouge.
+  switch_dock: (t, r) => grainy(t, rgb(0x232428), r, 0.07, 3),
+  switch_dock_front: (t, r) => {
+    grainy(t, rgb(0x232428), r, 0.07, 3);
+    for (let x = 6; x < 10; x++) t.px(x, 12, rgb(0xd8d8dc));
+  },
+  switch_back: (t, r) => grainy(t, rgb(0x2a2b30), r, 0.07, 3),
+  switch_screen: (t, r) => {
+    for (let y = 0; y < 16; y++) {
+      for (let x = 0; x < 16; x++) {
+        let c: RGB;
+        if (x < 3) c = rgb(0x1ea0e6);
+        else if (x > 12) c = rgb(0xf0443a);
+        else if (y < 2 || y > 13) c = rgb(0x101014);
+        else c = hsl(200 + y * 6, 0.7, 0.35 + (x % 3) * 0.04);
+        t.px(x, y, c, 255, 0.95 + r() * 0.08);
+        t.pxHeight(x, y, x < 3 || x > 12 ? 0.9 : 0.2);
+      }
+    }
+    // Boutons et sticks des manettes.
+    t.px(1, 4, rgb(0x0a0a0a)); t.px(14, 10, rgb(0x0a0a0a));
+    for (const [x, y] of [[1, 9], [1, 11], [0, 10], [2, 10], [14, 5], [14, 7], [13, 6], [15, 6]] as const) t.px(x, y, rgb(0x15151a));
+    t.px(7, 7, rgb(0xff5050)); t.px(8, 7, rgb(0xffffff));
+  },
+  // Bureau : plateau noir, liseré lumineux sur la tranche.
+  desk_top: (t, r) => { grainy(t, rgb(0x18191d), r, 0.08, 4); speckle(t, rgb(0x26272c), r, 20, 1.1); },
+  desk_edge: (t, r) => {
+    grainy(t, rgb(0x18191d), r, 0.08, 4);
+    for (let x = 0; x < 16; x++) for (let y = 6; y < 10; y++) t.px(x, y, hsl(x * 22, 1, 0.55));
+  },
+  // Lampe RGB : un dégradé qui fait le tour du cercle chromatique.
+  rgb_lamp: (t, r) => {
+    for (let y = 0; y < TILE; y++) {
+      for (let x = 0; x < TILE; x++) {
+        const c = hsl(((x + y) / (TILE * 2)) * 360, 1, 0.6);
+        t.set(x, y, c, 255, 0.95 + r() * 0.1);
+      }
+    }
+  },
+  // Djembé : bois sculpté, cordage en losanges, peau de chèvre claire.
+  djembe_wood: (t, r) => planks(t, rgb(0x7a4a24), r, 6, true),
+  djembe_side: (t, r) => {
+    planks(t, rgb(0x8a5428), r, 6, true);
+    for (let y = 0; y < 16; y++) {
+      const a = (y * 2) % 8, b = 7 - a;
+      for (let x = 0; x < 16; x += 8) {
+        t.px(x + a, y, rgb(0xd9c08a)); t.px(x + b, y, rgb(0xd9c08a));
+        t.pxHeight(x + a, y, 1); t.pxHeight(x + b, y, 1);
+      }
+    }
+    for (let x = 0; x < 16; x++) { t.px(x, 0, rgb(0xb02020)); t.px(x, 15, rgb(0xd8a020)); }
+  },
+  djembe_skin: (t, r) => {
+    grainy(t, rgb(0xe6d3a8), r, 0.1, 4);
+    speckle(t, rgb(0xc9b080), r, 12, 0.9);
+    for (let i = 0; i < 16; i++) { t.px(i, 0, rgb(0xc9a66a)); t.px(i, 15, rgb(0xc9a66a)); t.px(0, i, rgb(0xc9a66a)); t.px(15, i, rgb(0xc9a66a)); }
+  },
+  djembe_rim: (t, r) => {
+    grainy(t, rgb(0xd9c08a), r, 0.12, 4);
+    for (let x = 0; x < 16; x += 2) for (let y = 0; y < 16; y++) t.px(x, y, rgb(0xb89a60));
+  },
+  // Levier : manche de bois, pommeau rouge (fermé) ou vert (ouvert).
+  lever_handle: (t, r) => planks(t, rgb(0x8a6a3c), r, 4, true),
+  lever_knob_off: (t, r) => grainy(t, rgb(0xd02a2a), r, 0.12, 3),
+  lever_knob_on: (t, r) => grainy(t, rgb(0x2ad04a), r, 0.12, 3),
 
   // Carottes : fanes vertes et racines orange qui pointent.
   carrots: (t, r) => {

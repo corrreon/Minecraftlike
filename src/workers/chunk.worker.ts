@@ -42,7 +42,7 @@ self.onmessage = (ev: MessageEvent<WorkerRequest>) => {
     }
 
     case 'mesh': {
-      const blocks = new Uint8Array(msg.blocks);
+      const blocks = new Uint16Array(msg.blocks);
       const light = new Uint8Array(msg.light);
       const m = meshChunk(blocks, light);
       const transfer: ArrayBuffer[] = [msg.blocks, msg.light];

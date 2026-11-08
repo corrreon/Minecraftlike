@@ -222,6 +222,55 @@ export class AudioEngine {
     src.stop(t + 1.5);
   }
 
+  /** Rafale de bruit filtré, brève et sèche : la base de tous les coups de feu. */
+  private burst(freqFrom: number, freqTo: number, duration: number, volume: number): void {
+    if (!this.ctx || !this.started) return;
+    const t = this.ctx.currentTime;
+    const src = this.noiseSource();
+    if (!src) return;
+    const lp = this.ctx.createBiquadFilter();
+    lp.type = 'lowpass';
+    lp.frequency.setValueAtTime(freqFrom, t);
+    lp.frequency.exponentialRampToValueAtTime(freqTo, t + duration);
+    const g = this.ctx.createGain();
+    g.gain.setValueAtTime(0, t);
+    g.gain.linearRampToValueAtTime(volume, t + 0.003);
+    g.gain.exponentialRampToValueAtTime(0.001, t + duration);
+    src.connect(lp).connect(g).connect(this.sfxBus);
+    src.start(t);
+    src.stop(t + duration + 0.02);
+  }
+
+  /** Coup de feu : claquement du pistolet, crépitement de la mitraillette, souffle du canon. */
+  gunshot(kind: 'pistol' | 'machine_gun' | 'cannon' | 'rocket'): void {
+    if (kind === 'pistol') { this.burst(5200, 300, 0.22, 0.6); this.voice(160, 0.08, 'square', 0.16, 0.4); }
+    else if (kind === 'machine_gun') this.burst(4200, 380, 0.11, 0.42);
+    else if (kind === 'cannon') { this.burst(1500, 60, 0.9, 0.9); this.voice(70, 0.5, 'sawtooth', 0.3, 0.4); }
+    else { this.burst(2600, 200, 0.6, 0.5); this.voice(300, 0.5, 'sawtooth', 0.08, 2.5); }
+  }
+
+  /** Clic à vide : le chargeur est vide. */
+  dryFire(): void {
+    this.voice(2400, 0.03, 'square', 0.1, 1);
+  }
+
+  /** Djembé : un « boum » grave au centre de la peau, une claque aiguë au bord. */
+  drum(pitch: number): void {
+    this.voice(110 * pitch, 0.35, 'sine', 0.55, 0.55);
+    this.hit(PROFILES.wool, 0.7 * pitch, 0.7, 0.5);
+  }
+
+  /** Klaxon : deux notes tenues, légèrement désaccordées. */
+  horn(): void {
+    this.voice(392, 0.35, 'square', 0.12, 0.99);
+    this.voice(494, 0.35, 'square', 0.1, 0.99);
+  }
+
+  /** Petite ritournelle de démarrage de console. */
+  chime(): void {
+    [988, 1319, 1568].forEach((f, i) => setTimeout(() => this.voice(f, 0.14, 'square', 0.1, 1), i * 80));
+  }
+
   /** Nappe d'ambiance douce, jouée en fond selon l'heure du jour. */
   private ambientOsc: OscillatorNode[] = [];
   setAmbience(active: boolean, night: boolean): void {

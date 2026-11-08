@@ -69,6 +69,32 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   décrochage l'avion tient sa trajectoire, en dessous la portance s'effondre au
   carré et il tombe. On n'en descend qu'une fois posé et à l'arrêt, et le
   frapper le replie en objet.
+- **Voitures et tank** : une **Lamborghini** (la plus rapide), une **Tesla**
+  (l'accélération la plus franche), une **Porsche** (la plus maniable) et un
+  **tank** lent mais tout-terrain. On les fabrique, on les pose au sol, et clic
+  droit pour prendre le volant : `Z`/`S` accélèrent et reculent, `Q`/`D`
+  braquent — une voiture doit rouler pour tourner, le tank pivote sur ses
+  chenilles. Les véhicules franchissent une marche d'un bloc, patinent dans
+  l'eau, et une créature percutée à pleine vitesse est blessée et projetée. Un
+  compteur affiche la vitesse en km/h ; `Espace` klaxonne, `Maj` freine puis,
+  à l'arrêt, fait descendre. La **tourelle du tank suit le regard**, et le clic
+  gauche tire un **obus** qui explose à l'impact.
+- **Armes à feu** : **pistolet** (coup par coup), **mitraillette** (tir
+  automatique tant qu'on tient le bouton) et **lance-roquettes** (explosion à
+  l'impact). Le clic gauche tire au lieu de frapper, chaque tir consomme une
+  munition de l'inventaire (illimitées en créatif) et le cadran affiche ce
+  qu'il en reste. Les balles brisent le verre ; une traçante montre le trajet.
+- **Coin gamer** : **PC gamer** aux ventilateurs lumineux, **écran gamer** et
+  clavier rétroéclairé, **console Switch 2**, **siège gamer** dans lequel on
+  s'assoit, **bureau gamer** et **lampe RGB**. Les meubles tournent leur façade
+  vers celui qui les pose, et s'allument au clic droit.
+- **Djembé** : clic droit pour en jouer — grave au centre de la peau, claquant
+  au bord, aussi vite qu'on tape.
+- **Bases secrètes** : **faux blocs** (pierre, bibliothèque, herbe) qui ont l'air
+  pleins mais qu'on traverse — une pelouse qui cache un puits —, **murs et
+  bibliothèques secrets** qui s'escamotent dans le sol au clic droit avec toutes
+  leurs voisines, et un **levier** qui ouvre ou referme toutes les portes
+  secrètes à huit blocs à la ronde.
 - **Lucky bloc** : ce qu'il rend est tiré au sort à la casse — magot, équipement,
   vivres, matériaux, une créature amicale, une volée de monstres, ou une
   explosion. On en trouve dans les coffres au trésor et les portails engloutis.
@@ -157,15 +183,15 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   d'armure, glisser-déposer (clic gauche/droit, `Maj`+clic pour le transfert
   rapide), infobulles détaillées, sélecteur d'objets filtrable en créatif.
 - **Artisanat** : grille 2×2 dans l'inventaire, 3×3 sur un établi, plus de
-  **181 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
+  **204 recettes** (outils et armures des 6 matériaux, blocs compacts, teinture
   de la laine, dalles et escaliers — dessinés dans un sens ou dans l'autre —,
   porte, portillon, barrière, lit, échelle, trappe, seau, lucky bloc, avion,
-  laisse,
+  laisse, véhicules, armes et munitions, meubles gamer, blocs secrets,
   TNT, papier, livres, briquet, œil de l'Ender…), avec ingrédients
   alternatifs. La progression **fer → or → diamant → netherite** va jusqu'au
   bout : les débris antiques se fondent en éclats, quatre éclats et quatre
   lingots d'or donnent un lingot, et l'équipement en diamant s'améliore.
-- **Créatures et engins sauvegardés** : le cheptel, les villageois et les avions
+- **Créatures et engins sauvegardés** : le cheptel, les villageois, les avions et les véhicules
   sont écrits par dimension et retrouvés à l'identique au rechargement —
   position, cap, points de vie, mouton déjà tondu, vitesse de l'appareil. Les
   entités reviennent une fois le terrain chargé, sans quoi elles naîtraient dans
@@ -277,6 +303,10 @@ Chaque raccourci a son équivalent au doigt : rien n'est réservé au clavier.
 | Descendre | `Maj` (posé et à l'arrêt pour un avion) | `⤓` |
 | Piloter un avion | regard souris | **joystick** — le pouce droit tient les gaz |
 | Mettre les gaz / freiner | `Espace` / `Maj` | `⤒` / `⤓` |
+| Conduire une voiture ou le tank | `Z Q S D` | joystick |
+| Klaxonner / freiner, puis descendre à l'arrêt | `Espace` / `Maj` | `⤒` / `⤓` |
+| Tirer (arme en main, ou canon du tank) | clic gauche | `⛏` |
+| S'asseoir / se lever | clic droit sur le siège / `Maj` | `▣` / `⤓` |
 | Grimper à une échelle | avancer vers elle, ou `Espace` | joystick vers elle, ou `⤒` |
 | Changer d'objet | molette, `1`-`9` | appui sur une case de la barre rapide |
 | Prendre le bloc visé | clic milieu | `⊕` |
@@ -336,17 +366,19 @@ Quelques points de conception :
 - Les objets tombés au sol ne sont pas sauvegardés : ce qui traîne encore à la
   fermeture est perdu. Ils s'effacent de toute façon au bout de cinq minutes.
 - La coulée d'eau n'a pas de niveaux : Minecraft en compte sept, ce qui donne
-  la lame qui s'amincit au bord d'une nappe, mais coûterait sept identifiants
-  de bloc par fluide et il n'en reste que deux. Les bords sont donc francs.
+  la lame qui s'amincit au bord d'une nappe. Les identifiants le permettent
+  désormais, mais la coulée reste à réécrire : les bords sont donc francs.
 - Une nappe ne se retire pas quand on récupère sa source : sans niveaux, rien
   ne dit à une case d'eau d'où elle vient. Il faut la repuiser au seau.
 - **La lave, elle, ne coule pas** : elle reste statique. C'est délibéré — une
   lave qui s'étale brûlerait maisons et bêtes sans prévenir.
-- Les formes non cubiques se limitent à deux boîtes par bloc : dalles, escaliers
-  et menuiserie passent, mais un muret ou une clôture, qui en demandent plus,
-  restent hors de portée du mailleur.
-- Il ne reste que **10 identifiants de bloc libres** sur 256 : toute famille
-  orientée supplémentaire demanderait de passer les identifiants sur 16 bits.
+- Les formes non cubiques se limitent à quatre boîtes par bloc : de quoi bâtir
+  un siège ou un écran, pas une sculpture.
+- Les identifiants de bloc sont sur **16 bits** (65 536 possibles) : les
+  anciennes sauvegardes, écrites sur 8 bits, se relisent telles quelles.
+- Les balles sont instantanées (pas de projectile qui vole) et ne traversent
+  rien : la première créature ou le premier bloc rencontré arrête le tir.
+- Une explosion d'obus ou de roquette trop proche blesse aussi le tireur.
 - Une trappe fermée oublie son orientation, qu'on ne voit plus de toute façon.
 - Les escaliers ne se posent qu'à l'endroit et les portes n'ont qu'un sens de
   battant : les variantes retournées ou à gonds inversés doubleraient le nombre

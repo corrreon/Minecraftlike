@@ -4,7 +4,7 @@
  * objets qui n'existent pas sous forme de bloc.
  */
 
-import { BLOCKS, BLOCK_BY_KEY, FACINGS, STAIR_FACINGS, STAIR_MATERIALS, RenderKind, type ToolKind } from '../world/blocks';
+import { BLOCKS, BLOCK_BY_KEY, FACINGS, FIRST_V2_BLOCK, STAIR_FACINGS, STAIR_MATERIALS, RenderKind, type ToolKind } from '../world/blocks';
 
 export interface ToolStats {
   kind: ToolKind;
@@ -31,7 +31,26 @@ export interface ItemDef {
   armor?: { slot: number; defense: number };
   /** Couleur dominante utilisée par le générateur d'icônes. */
   color: number;
-  icon: 'block' | 'tool' | 'gem' | 'ingot' | 'nugget' | 'stick' | 'food' | 'dust' | 'seed' | 'armor' | 'plain';
+  icon: 'block' | 'tool' | 'gem' | 'ingot' | 'nugget' | 'stick' | 'food' | 'dust' | 'seed' | 'armor' | 'plain' | 'gun' | 'ammo' | 'vehicle';
+  /** Arme à feu : cadence, dégâts, munition consommée. */
+  gun?: GunStats;
+}
+
+export interface GunStats {
+  /** Secondes entre deux tirs. */
+  cooldown: number;
+  damage: number;
+  /** Portée, en blocs. */
+  range: number;
+  /** Clé de l'objet consommé à chaque tir. */
+  ammo: string;
+  /** Tir automatique tant que le bouton est tenu. */
+  auto: boolean;
+  /** Rayon d'explosion à l'impact (0 = balle). */
+  blast: number;
+  /** Dispersion, en radians. */
+  spread: number;
+  sound: 'pistol' | 'machine_gun' | 'rocket';
 }
 
 export const ITEMS: ItemDef[] = [];
@@ -50,6 +69,7 @@ interface ItemOptions {
   armor?: { slot: number; defense: number };
   color?: number;
   icon?: ItemDef['icon'];
+  gun?: GunStats;
 }
 
 function item(key: string, o: ItemOptions): ItemDef {
@@ -66,6 +86,7 @@ function item(key: string, o: ItemOptions): ItemDef {
     armor: o.armor,
     color: o.color ?? 0xffffff,
     icon: o.icon ?? 'plain',
+    gun: o.gun,
   };
   ITEMS.push(def);
   ITEM_BY_KEY.set(key, def);
@@ -98,6 +119,9 @@ for (const b of BLOCKS) {
   if (b.key.startsWith('ladder_')) continue;
   if (b.key.startsWith('oak_trapdoor_')) continue;
   if (b.key === 'carrots') continue; // l'objet est la carotte, pas le plant
+  // Blocs venus après le passage en 16 bits : leurs objets sont enregistrés en
+  // queue de registre, pour ne décaler aucun identifiant d'objet existant.
+  if (b.id >= FIRST_V2_BLOCK) continue;
   item(b.key, {
     name: b.name,
     block: b.id,
@@ -343,6 +367,56 @@ item('bucket', { name: 'Seau', maxStack: 1, color: 0xb0b6bd, icon: 'nugget' });
 item('water_bucket', { name: 'Seau d’eau', maxStack: 1, color: 0x3a6fd8, icon: 'nugget' });
 item('lava_bucket', { name: 'Seau de lave', maxStack: 1, color: 0xe06a1a, icon: 'nugget', fuel: 1000 });
 
+// ---------------------------------------------------------------------------
+// Coin gamer, bases secrètes, armes et véhicules. Toujours en queue : les
+// identifiants d'objets sont écrits dans les inventaires sauvegardés.
+// ---------------------------------------------------------------------------
+
+/** Un objet pour un meuble orienté : les quatre variantes y renvoient. */
+function furnitureItem(key: string, variants: string[], color: number): void {
+  const first = BLOCK_BY_KEY.get(variants[0])!;
+  const def = item(key, { name: first.name, block: first.id, icon: 'block', color });
+  for (const v of variants) ITEM_OF_BLOCK.set(BLOCK_BY_KEY.get(v)!.id, def);
+}
+for (const key of ['switch2', 'gaming_pc', 'gaming_monitor', 'gaming_chair']) {
+  furnitureItem(key, FACINGS.map((f) => `${key}_${f}`), 0xffffff);
+}
+for (const key of ['gaming_desk', 'rgb_lamp', 'djembe', 'fake_stone_bricks', 'fake_bookshelf', 'fake_grass']) {
+  const b = BLOCK_BY_KEY.get(key)!;
+  item(key, { name: b.name, block: b.id, icon: 'block', color: b.tint || 0xffffff });
+}
+furnitureItem('secret_bookshelf', ['secret_bookshelf_closed', 'secret_bookshelf_open'], 0xffffff);
+furnitureItem('secret_stone', ['secret_stone_closed', 'secret_stone_open'], 0xffffff);
+furnitureItem('lever', ['lever_off', 'lever_on'], 0xffffff);
+
+// Munitions.
+item('bullets', { name: 'Munitions', color: 0xd8b040, icon: 'ammo' });
+item('rocket', { name: 'Roquette', maxStack: 16, color: 0x5a7a3a, icon: 'ammo' });
+item('tank_shell', { name: 'Obus', maxStack: 16, color: 0x8a8a70, icon: 'ammo' });
+
+// Armes à feu : le clic gauche tire au lieu de frapper.
+item('pistol', {
+  name: 'Pistolet', maxStack: 1, color: 0x3a3a40, icon: 'gun',
+  gun: { cooldown: 0.32, damage: 6, range: 48, ammo: 'bullets', auto: false, blast: 0, spread: 0.004, sound: 'pistol' },
+});
+item('machine_gun', {
+  name: 'Mitraillette', maxStack: 1, color: 0x2a2c30, icon: 'gun',
+  gun: { cooldown: 0.09, damage: 3, range: 40, ammo: 'bullets', auto: true, blast: 0, spread: 0.03, sound: 'machine_gun' },
+});
+item('bazooka', {
+  name: 'Lance-roquettes', maxStack: 1, color: 0x4a6a32, icon: 'gun',
+  gun: { cooldown: 1.2, damage: 12, range: 70, ammo: 'rocket', auto: false, blast: 2.6, spread: 0, sound: 'rocket' },
+});
+
+// Véhicules : comme l'avion, l'objet fait apparaître l'engin devant soi.
+item('tank', { name: 'Tank', maxStack: 1, color: 0x56653a, icon: 'vehicle' });
+item('lamborghini', { name: 'Lamborghini', maxStack: 1, color: 0x9ad81e, icon: 'vehicle' });
+item('tesla', { name: 'Tesla', maxStack: 1, color: 0xe8e8ec, icon: 'vehicle' });
+item('porsche', { name: 'Porsche', maxStack: 1, color: 0xc8202a, icon: 'vehicle' });
+
+/** Objets qui font apparaître un engin piloté. */
+export const VEHICLE_ITEMS = new Set(['plane', 'tank', 'lamborghini', 'tesla', 'porsche']);
+
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];
 }
@@ -454,7 +528,7 @@ const NATURE_KEYS = new Set([
 
 export function itemCategory(def: ItemDef): ItemCategory {
   // L'avion se range avec l'équipement : c'est un engin, pas un matériau.
-  if (def.key === 'plane') return 'outils';
+  if (VEHICLE_ITEMS.has(def.key) || def.gun || def.icon === 'ammo') return 'outils';
   if (def.tool || def.armor) return 'outils';
   if (def.food) return 'nourriture';
   if (!def.block) return 'ressources';
@@ -470,6 +544,7 @@ export function itemCategory(def: ItemDef): ItemCategory {
   if (key === 'oak_door' || key === 'oak_fence_gate' || key === 'red_bed') return 'redstone';
   if (key === 'ladder' || key === 'oak_fence' || key === 'oak_trapdoor') return 'construction';
   if (key === 'lucky_block') return 'redstone';
+  if (key === 'lever' || key.startsWith('secret_') || key.startsWith('fake_')) return 'redstone';
   if (NATURE_KEYS.has(key)) return 'nature';
   const b = BLOCKS[def.block];
   if (b && (b.render === RenderKind.Cross || key.endsWith('_leaves') || key.endsWith('_log') || key.endsWith('_sapling'))) {

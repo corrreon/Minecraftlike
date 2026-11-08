@@ -40,7 +40,7 @@ import { AudioEngine, type SoundGroup } from '../audio/Audio';
 import { Mob, ItemEntity, MOBS, coloredBox, findSpawnSpot, findWaterSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
 import { Container, HOTBAR_SIZE, makeStack, type ItemStack } from '../items/Inventory';
 import { Inventory } from '../items/Inventory';
-import { ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, blockDrops, breakInfo, type ItemDef } from '../items/items';
+import { ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, VEHICLE_ITEMS, blockDrops, breakInfo, type GunStats, type ItemDef } from '../items/items';
 import { ONEBLOCK_PHASES, phaseFor, pickOneblock, rollLoot } from '../items/loot';
 import { GameMode, Player } from '../player/Player';
 import { raycast, type RaycastHit } from '../player/physics';
@@ -70,6 +70,17 @@ const MOB_TICK = 1.8;
 const PLANE_STALL_SPEED = 9;
 /** Sensibilité du manche de pilotage, en radians par seconde à fond de course. */
 const PLANE_STICK = 1.1;
+/** Hauteur des yeux du pilote au-dessus du plancher de chaque véhicule. */
+const VEHICLE_EYE: Record<string, number> = { tank: 2.05, lamborghini: 1.0, tesla: 1.2, porsche: 1.1 };
+/** Cadence du canon de tank, en secondes. */
+const CANNON_COOLDOWN = 1.6;
+/** En dessous de cette vitesse, s'accroupir fait descendre ; au-dessus, ça freine. */
+const VEHICLE_EXIT_SPEED = 1.5;
+/** Rayon d'action d'un levier sur les portes secrètes. */
+const LEVER_RANGE = 8;
+/** Taille maximale d'une porte secrète (blocs basculés ensemble). */
+const SECRET_MAX = 48;
+const OPPOSITE: Record<Facing, Facing> = { north: 'south', south: 'north', west: 'east', east: 'west' };
 /** Plafond d'objets au sol, et durée au bout de laquelle ils s'effacent. */
 const MAX_DROPS = 320;
 const DROP_LIFETIME = 300;
@@ -128,6 +139,18 @@ export class Game {
   private drops: ItemEntity[] = [];
   /** Créature actuellement montée, ou null. */
   private mount: Mob | null = null;
+  /** Siège occupé (siège gamer), en coordonnées de bloc. */
+  private seat: { x: number; y: number; z: number } | null = null;
+  /** Délai avant le prochain tir, et verrou du tir coup par coup. */
+  private gunCooldown = 0;
+  private triggerLocked = false;
+  private hornLocked = false;
+  /** Traçantes : segments éphémères tirés entre l'arme et l'impact. */
+  private tracerLines!: LineSegments;
+  private tracerBuf = new Float32Array(32 * 6);
+  private tracers: { a: Vector3; b: Vector3; life: number }[] = [];
+  /** Créatures percutées récemment par un véhicule : un choc, pas une rafale. */
+  private rammed = new WeakMap<Mob, number>();
   /** Les entités écrites ont déjà été relues pour la dimension courante. */
   private entitiesRestored = false;
   /**
@@ -287,6 +310,17 @@ export class Game {
     this.leashLines.visible = false;
     this.scene.add(this.leashLines);
 
+    // Traçantes des armes à feu : même principe, un seul objet réécrit.
+    const tracerGeo = new BufferGeometry();
+    tracerGeo.setAttribute('position', new BufferAttribute(this.tracerBuf, 3));
+    this.tracerLines = new LineSegments(
+      tracerGeo,
+      new LineBasicMaterial({ color: 0xffe08a, transparent: true, opacity: 0.85 }),
+    );
+    this.tracerLines.frustumCulled = false;
+    this.tracerLines.visible = false;
+    this.scene.add(this.tracerLines);
+
     this.heldView = { group: new Group(), current: -1, swing: 0 };
     this.scene.add(this.heldView.group);
     this.playerModel = this.buildPlayerModel();
@@ -385,7 +419,7 @@ export class Game {
   debugTie(x: number, y: number, z: number): number {
     let n = 0;
     for (const m of this.mobs) {
-      if (m.def.hostile || m.def.aircraft) continue;
+      if (m.def.hostile || m.def.machine) continue;
       if (m.position.distanceTo(new Vector3(x + 0.5, y, z + 0.5)) > 8) continue;
       m.leashed = false;
       m.leashPost = { x, y, z };
@@ -459,6 +493,15 @@ export class Game {
     const cx = floorDiv(x, CHUNK_X);
     const cz = floorDiv(z, CHUNK_Z);
     this.save?.recordEdit(cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
+    return true;
+  }
+
+  /** Met un objet dans un emplacement de la barre rapide et le sélectionne. */
+  debugGive(key: string, count = 1, slot = 0): boolean {
+    const def = ITEM_BY_KEY.get(key);
+    if (!def) return false;
+    this.inventory.main.set(slot, makeStack(def, count));
+    this.inventory.selected = slot;
     return true;
   }
 
@@ -952,7 +995,7 @@ export class Game {
   /** Pile d'annulation : quadruplets [x, y, z, ancien bloc]. */
   private undoStack: number[][] = [];
   /** Presse-papier : dimensions puis contenu, relatif au coin minimal. */
-  private clipboard: { w: number; h: number; d: number; data: Uint8Array } | null = null;
+  private clipboard: { w: number; h: number; d: number; data: Uint16Array } | null = null;
 
   private static readonly MAX_REGION = 160000;
 
@@ -1097,7 +1140,7 @@ export class Game {
         let n = 0;
         // Les engins pilotés sont épargnés : ce sont des biens du joueur, pas
         // des créatures qui repeuplent le monde toutes seules.
-        for (const m of this.mobs) { if (m.def.aircraft) continue; m.dead = true; n++; }
+        for (const m of this.mobs) { if (m.def.machine) continue; m.dead = true; n++; }
         this.echo(`${n} créature(s) supprimée(s).`);
         break;
       }
@@ -1156,7 +1199,7 @@ export class Game {
         if (!b) { this.echo('Définissez d’abord /pos1 et /pos2.'); break; }
         if (b.count > Game.MAX_REGION) { this.echo('Zone trop grande.'); break; }
         const w = b.x1 - b.x0 + 1, h = b.y1 - b.y0 + 1, d = b.z1 - b.z0 + 1;
-        const data = new Uint8Array(w * h * d);
+        const data = new Uint16Array(w * h * d);
         for (let y = 0; y < h; y++)
           for (let z = 0; z < d; z++)
             for (let x = 0; x < w; x++) {
@@ -1326,7 +1369,9 @@ export class Game {
     // Entités. La monture est replacée après elles : le cavalier suit sa
     // créature, jamais l'inverse.
     this.updateEntities(dt, active);
-    if (active) this.updateMount(dt);
+    if (active) { this.updateMount(dt); this.updateSeat(); }
+    this.updateTracers(dt);
+    this.updateGauge();
     this.updateBlockEntities(dt);
     if (this.settings.particles) this.particles.update(dt, this.skyState.dayFactor);
 
@@ -1458,7 +1503,9 @@ export class Game {
           const x = sx + dx;
           const z = sz + dz;
           const y = this.groundHeight(x, z);
-          if (y < 0 || y < SEA_LEVEL - 1) continue;
+          // Un monde plat n'a que quelques couches : son sol est sous le niveau de
+          // la mer, et l'écarter faisait apparaître le joueur en plein ciel.
+          if (y < 0 || (this.worldType !== 'flat' && y < SEA_LEVEL - 1)) continue;
           const surface = blockDef(this.world.getBlock(x, y, z)).key;
           if (surface === 'water' || surface === 'lava') continue;
           if (this.world.getBlock(x, y + 1, z) !== 0 || this.world.getBlock(x, y + 2, z) !== 0) continue;
@@ -1604,8 +1651,14 @@ export class Game {
     // --- Prise du bloc visé (clic milieu) ---
     if (this.input.takePick() && hit) this.pickBlock(hit.block);
 
+    // --- Tir : une arme en main (ou le canon du tank) remplace le coup ---
+    const firing = this.updateTrigger(dt);
+
     // --- Attaque / minage ---
-    if (st.attack) {
+    if (firing) {
+      this.breakProgress = 0;
+      this.breakOverlay.visible = false;
+    } else if (st.attack) {
       const mob = this.pickMob(eye, dir, reach);
       this.lastAimedMob = mob ? mob.kind : null;
       if (mob && this.attackCooldown <= 0) {
@@ -1951,6 +2004,7 @@ export class Game {
       if (key.startsWith('oak_fence_gate_')) { this.toggleGate(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
       if (key.startsWith('red_bed_')) { this.sleep(hit.x, hit.y, hit.z); return; }
       if (key.startsWith('oak_trapdoor_')) { this.toggleTrapdoor(hit.x, hit.y, hit.z); this.heldView.swing = 1; return; }
+      if (this.useGadget(key, hit)) return;
       // Aucune de ces interactions n'a eu lieu : l'appui reste disponible pour
       // poser un bloc, geste qui, lui, se répète.
       this.useLocked = false;
@@ -1996,7 +2050,7 @@ export class Game {
       const eye = this.player.eyePosition.clone();
       const dir = this.player.forward.clone().normalize();
       const cible = this.pickMob(eye, dir, REACH_SURVIVAL);
-      if (cible && !cible.def.hostile && !cible.def.aircraft) {
+      if (cible && !cible.def.hostile && !cible.def.machine) {
         if (cible.leashed || cible.leashPost) {
           cible.leashed = false;
           cible.leashPost = null;
@@ -2011,14 +2065,17 @@ export class Game {
       }
     }
 
-    // L'avion n'est pas un bloc : il apparaît devant soi, prêt à décoller.
-    if (item.key === 'plane' && hit) {
+    // Avion, voitures et tank ne sont pas des blocs : l'engin apparaît devant
+    // soi, le nez dans la direction du regard.
+    if (VEHICLE_ITEMS.has(item.key) && hit) {
       this.useLocked = true;
-      this.addMob('plane', hit.x + hit.nx + 0.5, hit.y + hit.ny, hit.z + hit.nz + 0.5);
+      const engin = this.addMob(item.key as MobKind, hit.x + hit.nx + 0.5, hit.y + hit.ny, hit.z + hit.nz + 0.5);
+      if (engin.def.vehicle) { engin.yaw = this.player.yaw + Math.PI; engin.turretYaw = engin.yaw; }
+      else if (engin.def.aircraft) engin.yaw = this.player.yaw;
       this.audio.click();
       this.heldView.swing = 1;
       if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
-      this.hud.toast('Clic droit pour monter à bord.');
+      this.hud.toast(engin.def.vehicle ? 'Clic droit pour prendre le volant.' : 'Clic droit pour monter à bord.');
       return;
     }
 
@@ -2086,6 +2143,12 @@ export class Game {
       placeId = BLOCK_BY_KEY.get(`${base}_${this.viewFacing()}`)?.id ?? placeId;
     }
 
+    // Un meuble tourne sa façade vers celui qui le pose : l'écran face à soi.
+    if (placeDef.front && placeDef.key.endsWith('_north')) {
+      const base = placeDef.key.slice(0, -'_north'.length);
+      placeId = BLOCK_BY_KEY.get(`${base}_${OPPOSITE[this.viewFacing()]}`)?.id ?? placeId;
+    }
+
     // Le portillon barre le passage : son battant se met en travers du regard,
     // ce que donne directement l'orientation de la vue.
     if (placeDef.key === 'oak_fence_gate_north_closed') {
@@ -2109,7 +2172,17 @@ export class Game {
     // Le même appui ne doit pas enchaîner sur l'usage de l'objet tenu : sans
     // ce délai, monter en tenant un seau vidait le seau sous la monture.
     this.placeCooldown = 0.6;
-    this.hud.toast('En selle. Accroupis-toi pour descendre.');
+    if (m.def.vehicle) {
+      // Au volant, on regarde la route : la caméra s'aligne sur le capot.
+      this.player.yaw = m.yaw + Math.PI;
+      this.player.pitch = -0.08;
+      m.turretYaw = m.yaw;
+      this.hud.toast(m.def.vehicle.cannon
+        ? 'Z/Q/S/D pour rouler, clic gauche pour tirer un obus. Accroupis-toi à l’arrêt pour descendre.'
+        : 'Z/Q/S/D pour rouler, saut pour klaxonner. Accroupis-toi à l’arrêt pour descendre.');
+    } else {
+      this.hud.toast('En selle. Accroupis-toi pour descendre.');
+    }
     this.audio.click();
   }
 
@@ -2121,6 +2194,10 @@ export class Game {
     m.driveX = 0;
     m.driveZ = 0;
     m.driveJump = false;
+    m.throttle = 0;
+    m.steer = 0;
+    m.driveBrake = false;
+    m.setInterior(false);
     this.mount = null;
     this.player.riding = false;
     // On descend sur le côté, jamais dans la monture.
@@ -2164,6 +2241,8 @@ export class Game {
       return;
     }
 
+    if (m.def.vehicle) { this.driveVehicle(m, dt); return; }
+
     if (st.sneak) { this.dismount(); return; }
 
     // Le repère est celui du joueur : « avant » vaut (-sin yaw, -cos yaw).
@@ -2187,6 +2266,286 @@ export class Game {
     this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
     this.player.velocity.set(0, 0, 0);
     this.player.onGround = m.onGround;
+  }
+
+  /**
+   * Volant d'un véhicule. Avant/arrière = accélérateur, gauche/droite =
+   * volant ; le regard reste libre, et oriente la tourelle du tank.
+   */
+  private driveVehicle(m: Mob, dt: number): void {
+    const st = this.input.state;
+    const v = m.def.vehicle!;
+    const ix = (st.right ? 1 : 0) - (st.left ? 1 : 0) + st.moveX;
+    const iz = (st.back ? 1 : 0) - (st.forward ? 1 : 0) + st.moveY;
+    m.throttle = clamp(-iz, -1, 1);
+    m.steer = clamp(ix, -1, 1);
+    m.driveYaw = this.player.yaw + Math.PI;
+    // S'accroupir freine ; à l'arrêt, on descend.
+    m.driveBrake = st.sneak;
+    if (st.sneak && Math.abs(m.airspeed) < VEHICLE_EXIT_SPEED) { this.dismount(); return; }
+    if (st.jump && !this.hornLocked && !v.cannon) { this.hornLocked = true; this.audio.horn(); }
+    if (!st.jump) this.hornLocked = false;
+
+    m.setInterior(this.player.cameraMode === 0);
+    // Les yeux du pilote, dans l'habitacle (ou dans la trappe du tank).
+    const eye = VEHICLE_EYE[m.kind] ?? 1;
+    const seat = m.position.y + eye - this.player.eyeHeight;
+    this.player.position.x = m.position.x;
+    this.player.position.z = m.position.z;
+    this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
+    this.player.velocity.set(0, 0, 0);
+    this.player.onGround = m.onGround;
+
+    // Percuter une créature à pleine vitesse la blesse et l'envoie valser.
+    const speed = Math.abs(m.airspeed);
+    if (speed > 6) {
+      const reach = m.def.width * 0.5 + 0.6;
+      for (const o of this.mobs) {
+        if (o === m || o.dead || o.def.machine) continue;
+        const dx = o.position.x - m.position.x, dz = o.position.z - m.position.z;
+        if (Math.hypot(dx, dz) > reach + o.def.width * 0.5 || Math.abs(o.position.y - m.position.y) > 2) continue;
+        const last = this.rammed.get(o) ?? -9;
+        if (this.elapsed - last < 0.8) continue;
+        this.rammed.set(o, this.elapsed);
+        this.damageMob(o, Math.round(speed * 0.6), m.position, 4 + speed * 0.4);
+      }
+    }
+
+    const kmh = Math.round(speed * 3.6);
+    let label = `${kmh} km/h${m.airspeed < -0.3 ? ' (marche arrière)' : ''}`;
+    if (v.cannon) label += `  ·  Obus : ${this.ammoCount('tank_shell')}`;
+    this.hud.setGauge(label, false);
+  }
+
+  // --- Armes à feu ---------------------------------------------------------
+
+  /** Munitions disponibles (illimitées en créatif). */
+  private ammoCount(key: string): number | string {
+    if (this.player.mode === GameMode.Creative) return '∞';
+    return this.inventory.main.count(key);
+  }
+
+  /** Retire une munition ; faux s'il n'y en a plus. */
+  private useAmmo(key: string): boolean {
+    if (this.player.mode === GameMode.Creative) return true;
+    const def = ITEM_BY_KEY.get(key);
+    if (!def || this.inventory.main.count(key) <= 0) return false;
+    this.inventory.main.remove(key, 1);
+    return true;
+  }
+
+  /**
+   * Tir d'une arme tenue en main, ou du canon du tank qu'on conduit. Le
+   * projectile est instantané : on trace le rayon, on touche la première
+   * créature ou le premier bloc rencontré.
+   */
+  private fire(gun: GunStats, fromCannon: boolean): void {
+    const origin = this.player.eyePosition.clone();
+    const dir = this.player.forward.clone().normalize();
+    if (gun.spread > 0) {
+      dir.x += (this.rnd() - 0.5) * gun.spread * 2;
+      dir.y += (this.rnd() - 0.5) * gun.spread * 2;
+      dir.z += (this.rnd() - 0.5) * gun.spread * 2;
+      dir.normalize();
+    }
+    // Le canon tire depuis sa bouche, dans l'axe de la tourelle et du regard.
+    const muzzle = fromCannon && this.mount ? this.mount.muzzle(new Vector3()) : origin.clone().addScaledVector(dir, 0.6).add(new Vector3(0, -0.15, 0));
+    if (fromCannon) origin.copy(muzzle);
+
+    const blockHit = raycast(this.world, origin, dir, gun.range);
+    const maxT = blockHit ? blockHit.distance : gun.range;
+    let target: Mob | null = null;
+    let bestT = maxT;
+    for (const m of this.mobs) {
+      if (m.dead || m === this.mount || m.def.machine) continue;
+      const w = m.def.width / 2;
+      const t = rayBox(origin, dir, m.position.x - w, m.position.y, m.position.z - w, m.position.x + w, m.position.y + m.def.height, m.position.z + w);
+      if (t !== null && t < bestT) { bestT = t; target = m; }
+    }
+    const impact = origin.clone().addScaledVector(dir, target ? bestT : maxT);
+    this.addTracer(muzzle, impact);
+    this.audio.gunshot(fromCannon ? 'cannon' : gun.sound);
+    this.heldView.swing = 0.6;
+
+    if (gun.blast > 0) {
+      // Obus et roquettes explosent à l'impact — sauf dans le vide.
+      if (target || blockHit) this.explode(impact.x, impact.y, impact.z, gun.blast, gun.damage);
+      return;
+    }
+    if (target) {
+      this.damageMob(target, gun.damage, origin, 2.5);
+    } else if (blockHit) {
+      const key = blockDef(blockHit.block).key;
+      // Une balle brise le verre, et ne fait qu'une étincelle sur le reste.
+      if (key.includes('glass') || key === 'ice') {
+        this.setBlock(blockHit.x, blockHit.y, blockHit.z, 0);
+        this.audio.break('glass');
+      } else if (this.settings.particles) {
+        this.particles.puff(impact.x, impact.y, impact.z, 0xffd080, 3);
+      }
+    }
+  }
+
+  private addTracer(a: Vector3, b: Vector3): void {
+    if (this.tracers.length >= 32) this.tracers.shift();
+    this.tracers.push({ a: a.clone(), b: b.clone(), life: 0.07 });
+  }
+
+  private updateTracers(dt: number): void {
+    for (const t of this.tracers) t.life -= dt;
+    this.tracers = this.tracers.filter((t) => t.life > 0);
+    if (this.tracers.length === 0) { this.tracerLines.visible = false; return; }
+    let k = 0;
+    for (const t of this.tracers) {
+      this.tracerBuf[k++] = t.a.x; this.tracerBuf[k++] = t.a.y; this.tracerBuf[k++] = t.a.z;
+      this.tracerBuf[k++] = t.b.x; this.tracerBuf[k++] = t.b.y; this.tracerBuf[k++] = t.b.z;
+    }
+    (this.tracerLines.geometry.getAttribute('position') as BufferAttribute).needsUpdate = true;
+    this.tracerLines.geometry.setDrawRange(0, this.tracers.length * 2);
+    this.tracerLines.visible = true;
+  }
+
+  /** Gâchette : rafale tant qu'on tient pour la mitraillette, coup par coup sinon. */
+  private updateTrigger(dt: number): boolean {
+    if (this.gunCooldown > 0) this.gunCooldown -= dt;
+    const st = this.input.state;
+    if (!st.attack) { this.triggerLocked = false; return false; }
+
+    const tank = this.mount?.def.vehicle?.cannon ? this.mount : null;
+    const gun = tank
+      ? { cooldown: CANNON_COOLDOWN, damage: 20, range: 90, ammo: 'tank_shell', auto: false, blast: 3, spread: 0, sound: 'rocket' as const }
+      : this.inventory.selectedStack?.item.gun;
+    if (!gun) return false;
+    if (this.player.mode === GameMode.Spectator) return true;
+    if (this.gunCooldown > 0 || (!gun.auto && this.triggerLocked)) return true;
+    this.triggerLocked = true;
+    this.gunCooldown = gun.cooldown;
+    if (!this.useAmmo(gun.ammo)) {
+      this.audio.dryFire();
+      const nom = ITEM_BY_KEY.get(gun.ammo)?.name ?? gun.ammo;
+      this.hud.toast(`Plus de munitions : il faut des « ${nom} ».`, 'warn', 1600);
+      this.gunCooldown = 0.4;
+      return true;
+    }
+    this.fire(gun, tank !== null);
+    return true;
+  }
+
+  // --- Gadgets : coin gamer et bases secrètes -----------------------------
+
+  /** Clic droit sur un meuble ou un mécanisme. Vrai si l'appui a servi. */
+  private useGadget(key: string, hit: RaycastHit): boolean {
+    if (key.startsWith('djembe')) {
+      // Au centre de la peau le son est grave ; au bord, il claque.
+      const dx = hit.point.x - (hit.x + 0.5), dz = hit.point.z - (hit.z + 0.5);
+      const bord = Math.hypot(dx, dz) > 0.2 || hit.ny !== 1;
+      this.audio.drum(bord ? 1.9 : 1);
+      if (this.settings.particles) this.particles.puff(hit.x + 0.5, hit.y + 1, hit.z + 0.5, 0xe6d3a8, 2);
+      this.heldView.swing = 1;
+      // Pas de verrou : on tape le rythme aussi vite qu'on veut.
+      this.useLocked = false;
+      this.placeCooldown = 0.12;
+      return true;
+    }
+    if (key.startsWith('switch2_')) {
+      this.audio.chime();
+      this.hud.toast('🎮 La Switch 2 démarre… À toi de jouer !');
+      return true;
+    }
+    if (key.startsWith('gaming_pc_') || key.startsWith('gaming_monitor_')) {
+      this.audio.chime();
+      this.hud.toast('🖥️ Le PC gamer s’allume : 240 images par seconde !');
+      return true;
+    }
+    if (key.startsWith('gaming_chair_')) { this.sitOn(hit.x, hit.y, hit.z); return true; }
+    if (key.startsWith('secret_')) { this.toggleSecret(hit.x, hit.y, hit.z); this.heldView.swing = 1; return true; }
+    if (key.startsWith('lever_')) { this.pullLever(hit.x, hit.y, hit.z); this.heldView.swing = 1; return true; }
+    return false;
+  }
+
+  /** S'asseoir dans un siège : on n'en bouge plus jusqu'à s'accroupir. */
+  private sitOn(x: number, y: number, z: number): void {
+    if (this.mount) return;
+    this.seat = { x, y, z };
+    this.player.riding = true;
+    this.player.velocity.set(0, 0, 0);
+    this.hud.toast('Bien installé. Accroupis-toi pour te lever.');
+    this.audio.place('wool');
+  }
+
+  private updateSeat(): void {
+    const s = this.seat;
+    if (!s) return;
+    const key = blockDef(this.world.getBlock(s.x, s.y, s.z)).key;
+    if (!key.startsWith('gaming_chair_') || this.input.state.sneak || this.player.dead) {
+      this.seat = null;
+      if (!this.mount) this.player.riding = false;
+      this.player.position.set(s.x + 0.5, s.y + 1.05, s.z + 0.5);
+      return;
+    }
+    // Assis : les yeux à hauteur de bureau, pas debout sur l'assise.
+    this.player.position.set(s.x + 0.5, s.y - 0.15, s.z + 0.5);
+    this.player.velocity.set(0, 0, 0);
+    this.player.onGround = true;
+  }
+
+  /**
+   * Ouvre ou ferme une porte secrète, et toutes les cellules secrètes qui la
+   * touchent : un mur de six blocs s'escamote d'un seul geste.
+   */
+  private toggleSecret(x: number, y: number, z: number, force?: 'open' | 'closed'): number {
+    const start = blockDef(this.world.getBlock(x, y, z)).key;
+    const m = /^(secret_\w+?)_(open|closed)$/.exec(start);
+    if (!m) return 0;
+    const next = force ?? (m[2] === 'closed' ? 'open' : 'closed');
+    const seen = new Set<string>();
+    const todo: [number, number, number][] = [[x, y, z]];
+    const cells: [number, number, number, string][] = [];
+    while (todo.length > 0 && cells.length < SECRET_MAX) {
+      const [cx, cy, cz] = todo.pop()!;
+      const k = `${cx},${cy},${cz}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      const mm = /^(secret_\w+?)_(open|closed)$/.exec(blockDef(this.world.getBlock(cx, cy, cz)).key);
+      if (!mm) continue;
+      cells.push([cx, cy, cz, mm[1]]);
+      for (const [dx, dy, dz] of NEIGHBOURS) todo.push([cx + dx, cy + dy, cz + dz]);
+    }
+    let n = 0;
+    for (const [cx, cy, cz, fam] of cells) {
+      const id = BLOCK_BY_KEY.get(`${fam}_${next}`)!.id;
+      // On ne referme pas un mur sur quelqu'un.
+      if (next === 'closed' && this.blocksPlayer(cx, cy, cz, id)) continue;
+      this.setBlock(cx, cy, cz, id);
+      n++;
+    }
+    if (n > 0) this.audio.place(next === 'open' ? 'stone' : 'wood');
+    return n;
+  }
+
+  /** Levier : bascule, et commande toutes les portes secrètes à portée. */
+  private pullLever(x: number, y: number, z: number): void {
+    const on = blockDef(this.world.getBlock(x, y, z)).key === 'lever_off';
+    this.setBlock(x, y, z, BLOCK_BY_KEY.get(on ? 'lever_on' : 'lever_off')!.id);
+    this.audio.click();
+    const want = on ? 'open' : 'closed';
+    const done = new Set<string>();
+    let n = 0;
+    const r = LEVER_RANGE;
+    for (let dy = -r; dy <= r; dy++) {
+      for (let dz = -r; dz <= r; dz++) {
+        for (let dx = -r; dx <= r; dx++) {
+          const bx = x + dx, by = y + dy, bz = z + dz;
+          const id = this.world.getBlock(bx, by, bz);
+          if (id <= 0 || done.has(`${bx},${by},${bz}`)) continue;
+          const key = blockDef(id).key;
+          if (!key.startsWith('secret_') || key.endsWith(`_${want}`)) continue;
+          done.add(`${bx},${by},${bz}`);
+          n += this.toggleSecret(bx, by, bz, want);
+        }
+      }
+    }
+    this.hud.toast(n > 0 ? (on ? 'Clac ! Le passage secret s’ouvre.' : 'Clac ! Le passage secret se referme.') : 'Le levier ne commande aucune porte secrète à portée.', 'info', 2000);
   }
 
   // --- Seaux ---------------------------------------------------------------
@@ -2891,15 +3250,35 @@ export class Game {
     return best;
   }
 
+  /** Blessure infligée à distance (balle, choc de véhicule) : recul depuis `from`. */
+  private damageMob(m: Mob, damage: number, from: Vector3, knock: number): void {
+    const killed = m.hurt(damage);
+    this.audio.mobHurt(m.kind);
+    if (this.settings.particles) this.particles.puff(m.position.x, m.position.y + m.def.height * 0.6, m.position.z, 0xc03030, 4);
+    if (!m.def.orbit) {
+      const dx = m.position.x - from.x, dz = m.position.z - from.z;
+      const len = Math.hypot(dx, dz) || 1;
+      m.velocity.x += (dx / len) * knock;
+      m.velocity.z += (dz / len) * knock;
+      m.velocity.y = Math.max(m.velocity.y, Math.min(6, knock * 0.6));
+    }
+    if (killed) {
+      m.lootDropped = true;
+      for (const d of m.rollDrops()) this.spawnDrop(d.x, d.y, d.z, d.stack);
+      this.player.addXp(m.def.xp);
+      if (m.def.orbit) this.onDragonSlain(m);
+    }
+  }
+
   private hitMob(m: Mob): void {
     const held = this.inventory.selectedStack;
 
     // Frapper un avion le replie en objet : c'est la seule façon de le
     // déplacer, et ça évite d'en semer un peu partout.
-    if (m.kind === 'plane') {
+    if (m.def.machine) {
       if (m === this.mount) this.dismount();
       m.dead = true;
-      const def = ITEM_BY_KEY.get('plane');
+      const def = ITEM_BY_KEY.get(m.kind);
       if (def && this.player.mode !== GameMode.Creative) {
         this.spawnDrop(m.position.x, m.position.y + 0.5, m.position.z, makeStack(def, 1));
       }
@@ -3053,7 +3432,7 @@ export class Game {
       const dist = m.position.distanceTo(this.player.position);
       // Un engin et une bête attachée appartiennent au joueur : ils ne
       // s'évaporent pas parce qu'il s'est éloigné. Le reste, si.
-      const permanent = m.def.aircraft === true || m.leashed || m.leashPost !== null;
+      const permanent = m.def.machine === true || m.leashed || m.leashPost !== null;
       if (m.dead || (dist > 110 && !m.def.orbit && !permanent)) {
         // Morte autrement que sous les coups du joueur — noyée, brûlée, tombée
         // dans le vide — la bête laisse quand même son butin.
@@ -3380,7 +3759,15 @@ export class Game {
     void this.save.saveEntities(dimension, this.serializeEntities());
   }
 
-  private explode(x: number, y: number, z: number, radius: number): void {
+  private explode(x: number, y: number, z: number, radius: number, mobDamage = 0): void {
+    // Les créatures prises dans le souffle (obus, roquettes).
+    if (mobDamage > 0) {
+      for (const m of this.mobs) {
+        if (m.dead || m.def.machine) continue;
+        const d = Math.hypot(m.position.x - x, m.position.y + m.def.height / 2 - y, m.position.z - z);
+        if (d < radius * 1.8) this.damageMob(m, Math.ceil(mobDamage * (1 - d / (radius * 1.8))), tmpVec3.set(x, y, z), 8);
+      }
+    }
     this.audio.explosion();
     if (this.settings.particles) this.particles.explosion(x, y, z, radius);
     const r = Math.ceil(radius);
@@ -3415,6 +3802,20 @@ export class Game {
       this.player.velocity.addScaledVector(dir, 12 * power);
       this.player.velocity.y += 5 * power;
       this.audio.hurt();
+    }
+  }
+
+  /** Jauge du HUD : vitesse de l'engin piloté, ou munitions de l'arme tenue. */
+  private updateGauge(): void {
+    const m = this.mount;
+    if (m?.def.aircraft || m?.def.vehicle) return; // tenue par updateMount
+    const gun = this.inventory.selectedStack?.item.gun;
+    if (gun) {
+      const nom = ITEM_BY_KEY.get(gun.ammo)?.name ?? '';
+      const n = this.ammoCount(gun.ammo);
+      this.hud.setGauge(`${nom} : ${n}`, n === 0);
+    } else {
+      this.hud.setGauge(null);
     }
   }
 
@@ -3562,6 +3963,17 @@ export class Game {
     }
     const mat = createEntityMaterial(this.env);
     (mat.uniforms.uLight.value as Color).setRGB(1.05, 1.05, 1.05);
+    if (item.gun) {
+      // Une arme se tient canon vers l'avant, dans l'axe du regard.
+      const len = item.key === 'bazooka' ? 0.8 : item.key === 'machine_gun' ? 0.62 : 0.34;
+      const g = new Mesh(coloredBox(item.key === 'bazooka' ? 0.13 : 0.08, item.key === 'bazooka' ? 0.13 : 0.11, len, item.color), mat);
+      const crosse = new Mesh(coloredBox(0.07, 0.16, 0.08, 0x5a3a20), mat);
+      crosse.position.set(0, -0.1, len * 0.3);
+      g.add(crosse);
+      g.rotation.y = 0.42;
+      g.position.z = -len * 0.25;
+      return g;
+    }
     const m = new Mesh(coloredBox(0.08, 0.42, 0.08, item.color), mat);
     m.rotation.z = 0.5;
     return m;
@@ -3750,6 +4162,8 @@ export class Game {
 
 const tmpVec = new Vector3();
 const tmpVec2 = new Vector3();
+const tmpVec3 = new Vector3();
+const clamp = (v: number, lo: number, hi: number): number => (v < lo ? lo : v > hi ? hi : v);
 const tmpColor = new Color();
 const sunScreen = new Vector2();
 

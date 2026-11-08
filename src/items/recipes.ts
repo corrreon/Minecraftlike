@@ -210,6 +210,37 @@ RECIPES.push(shaped(['SS ', 'SL ', '  S'], { S: 'string', L: 'leather' }, 'lead'
 // Avion : un moteur d'or, des ailes de fer, un fuselage de planches.
 RECIPES.push(shaped([' G ', 'IPI', 'I I'], { G: 'gold_ingot', I: 'iron_ingot', P: PLANKS }, 'plane'));
 
+// --- Coin gamer ----------------------------------------------------------------
+RECIPES.push(shaped(['III', 'GRG', 'III'], { I: 'iron_ingot', G: 'glass', R: 'redstone' }, 'gaming_pc'));
+RECIPES.push(shaped(['GGG', 'GRG', ' I '], { I: 'iron_ingot', G: 'glass', R: 'redstone' }, 'gaming_monitor'));
+RECIPES.push(shaped(['LGB', 'IRI'], { L: 'lapis', G: 'glass', B: 'redstone', I: 'iron_ingot', R: 'redstone' }, 'switch2'));
+RECIPES.push(shaped(['  W', 'WWW', ' I '], { W: WOOL, I: 'iron_ingot' }, 'gaming_chair'));
+RECIPES.push(shaped(['PPP', 'I I'], { P: PLANKS, I: 'iron_ingot' }, 'gaming_desk'));
+RECIPES.push(shaped(['GRG', 'RLR', 'GRG'], { G: 'glass', R: 'redstone', L: 'glowstone' }, 'rgb_lamp', 2));
+RECIPES.push(shaped(['L', 'P', 'P'], { L: 'leather', P: PLANKS }, 'djembe'));
+
+// --- Bases secrètes ------------------------------------------------------------
+RECIPES.push(shapeless(['stone_bricks', 'string'], 'fake_stone_bricks'));
+RECIPES.push(shapeless(['bookshelf', 'string'], 'fake_bookshelf'));
+RECIPES.push(shapeless(['grass_block', 'string'], 'fake_grass'));
+RECIPES.push(shapeless(['bookshelf', 'redstone'], 'secret_bookshelf'));
+RECIPES.push(shapeless(['stone_bricks', 'redstone'], 'secret_stone'));
+RECIPES.push(shaped(['S', 'C'], { S: 'stick', C: 'cobblestone' }, 'lever'));
+
+// --- Armes et munitions --------------------------------------------------------
+RECIPES.push(shaped(['III', ' PI'], { I: 'iron_ingot', P: PLANKS }, 'pistol'));
+RECIPES.push(shaped(['III', 'IRI', ' PI'], { I: 'iron_ingot', R: 'redstone', P: PLANKS }, 'machine_gun'));
+RECIPES.push(shaped(['III', ' G ', 'III'], { I: 'iron_ingot', G: 'gunpowder' }, 'bazooka'));
+RECIPES.push(shaped([' I ', 'IGI'], { I: 'iron_ingot', G: 'gunpowder' }, 'bullets', 16));
+RECIPES.push(shaped([' I ', 'GTG'], { I: 'iron_ingot', G: 'gunpowder', T: 'tnt' }, 'rocket', 2));
+RECIPES.push(shaped(['I', 'T', 'I'], { I: 'iron_ingot', T: 'tnt' }, 'tank_shell', 4));
+
+// --- Véhicules -----------------------------------------------------------------
+RECIPES.push(shaped([' B ', 'III', 'CCC'], { B: 'iron_block', I: 'iron_ingot', C: 'coal_block' }, 'tank'));
+RECIPES.push(shaped(['GLG', 'III', 'C C'], { G: 'glass', L: 'lime_wool', I: 'iron_ingot', C: 'coal_block' }, 'lamborghini'));
+RECIPES.push(shaped(['GWG', 'IRI', 'C C'], { G: 'glass', W: 'white_wool', I: 'iron_ingot', R: 'redstone_block', C: 'coal_block' }, 'tesla'));
+RECIPES.push(shaped(['GRG', 'III', 'C C'], { G: 'glass', R: 'red_wool', I: 'iron_ingot', C: 'coal_block' }, 'porsche'));
+
 // --- Seaux -----------------------------------------------------------------
 RECIPES.push(shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket'));
 

@@ -185,7 +185,8 @@ export class SaveManager {
         const c = cursor.result;
         if (!c) { resolve(); return; }
         const key = String(c.key).slice(this.meta.id.length + 1);
-        const value = c.value as { i: Int32Array; b: Uint8Array };
+        // Anciennes sauvegardes : b en Uint8Array ; nouvelles : Uint16Array. Mêmes identifiants.
+        const value = c.value as { i: Int32Array; b: Uint8Array | Uint16Array };
         const map = new Map<number, number>();
         const idx = value.i;
         const blk = value.b;
@@ -239,7 +240,7 @@ export class SaveManager {
         continue;
       }
       const i = new Int32Array(map.size);
-      const b = new Uint8Array(map.size);
+      const b = new Uint16Array(map.size);
       let k = 0;
       for (const [idx, blk] of map) { i[k] = idx; b[k] = blk; k++; }
       store.put({ i, b }, `${this.meta.id}:${key}`);

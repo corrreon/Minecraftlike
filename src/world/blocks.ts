@@ -39,7 +39,12 @@ export interface FaceTextures {
   top: string;
   bottom: string;
   side: string;
+  /** Face avant d'un meuble orienté (écran, façade) ; par défaut : `side`. */
+  front?: string;
 }
+
+/** Jeu de textures d'une boîte, quand les pièces d'un meuble diffèrent. */
+export type BoxTextures = Partial<FaceTextures>;
 
 export interface BlockDef {
   id: number;
@@ -97,6 +102,16 @@ export interface BlockDef {
   rotTop: number;
   /** On y grimpe : le contact remplace la chute par une montée contrôlée. */
   climbable: boolean;
+  /** Textures propres à chaque boîte (dans l'ordre de `boxes`). */
+  boxTextures?: BoxTextures[];
+  /** Côté vers lequel regarde la face avant (`textures.front`). */
+  front?: 'north' | 'south' | 'west' | 'east';
+  /**
+   * La texture s'étire sur chaque face de boîte au lieu d'en montrer un
+   * morceau à l'échelle : un écran de 6 pixels de haut doit montrer tout
+   * l'écran, pas son coin.
+   */
+  stretch: boolean;
 }
 
 /** Boîte élémentaire d'une forme, en fraction de voxel. */
@@ -144,6 +159,9 @@ interface BlockOptions {
   boxes?: Box[];
   rotTop?: number;
   climbable?: boolean;
+  boxTextures?: BoxTextures[];
+  front?: BlockDef['front'];
+  stretch?: boolean;
 }
 
 function define(key: string, o: BlockOptions): BlockDef {
@@ -154,6 +172,7 @@ function define(key: string, o: BlockOptions): BlockDef {
           top: o.textures.top ?? o.textures.side ?? 'missing',
           bottom: o.textures.bottom ?? o.textures.top ?? o.textures.side ?? 'missing',
           side: o.textures.side ?? o.textures.top ?? 'missing',
+          front: o.textures.front,
         };
 
   const render = o.render ?? RenderKind.Cube;
@@ -186,6 +205,9 @@ function define(key: string, o: BlockOptions): BlockDef {
     boxes: o.boxes,
     rotTop: o.rotTop ?? 0,
     climbable: o.climbable ?? false,
+    boxTextures: o.boxTextures,
+    front: o.front,
+    stretch: o.stretch ?? false,
     textures: t,
     layers: { top: tex(t.top), bottom: tex(t.bottom), side: tex(t.side) },
   };
@@ -931,6 +953,250 @@ define('carrots', {
   dropCount: [1, 3],
 });
 
+// ---------------------------------------------------------------------------
+// Identifiants sur 16 bits : tout ce qui suit dépasse l'ancienne limite de 256.
+// ---------------------------------------------------------------------------
+
+/** Premier bloc ajouté après le passage aux identifiants 16 bits. */
+export const FIRST_V2_BLOCK = BLOCKS.length;
+
+/**
+ * Fait tourner une boîte dessinée « face avant au nord » (vers -Z) pour
+ * qu'elle regarde vers `facing`. On tourne autour du centre du voxel.
+ */
+function turn(b: Box, facing: Facing): Box {
+  const map = (x: number, z: number): [number, number] => {
+    switch (facing) {
+      case 'north': return [x, z];
+      case 'south': return [1 - x, 1 - z];
+      case 'west': return [z, 1 - x];
+      case 'east': return [1 - z, x];
+    }
+  };
+  const [ax, az] = map(b[0], b[2]);
+  const [bx, bz] = map(b[3], b[5]);
+  return [Math.min(ax, bx), b[1], Math.min(az, bz), Math.max(ax, bx), b[4], Math.max(az, bz)];
+}
+
+interface FurnitureSpec {
+  key: string;
+  name: string;
+  boxes: Box[];
+  boxTextures: BoxTextures[];
+  hardness?: number;
+  emission?: number;
+  sound?: BlockDef['sound'];
+  solid?: boolean;
+  tool?: ToolKind;
+}
+
+/** Un meuble orienté : quatre identifiants, un par direction de sa façade. */
+function furniture(spec: FurnitureSpec): void {
+  for (const facing of FACINGS) {
+    define(`${spec.key}_${facing}`, {
+      name: spec.name,
+      textures: spec.boxTextures[0].side ?? 'missing',
+      layer: RenderLayer.Cutout,
+      opaque: false,
+      lightFilter: 0,
+      solid: spec.solid ?? true,
+      hardness: spec.hardness ?? 1,
+      tool: spec.tool ?? 'pickaxe',
+      sound: spec.sound ?? 'metal',
+      emission: spec.emission ?? 0,
+      drop: spec.key,
+      boxes: spec.boxes.map((b) => turn(b, facing)),
+      boxTextures: spec.boxTextures,
+      front: facing,
+      stretch: true,
+    });
+  }
+}
+
+// --- Coin gamer -------------------------------------------------------------
+
+/** Console de salon posée sur son socle, l'écran tourné vers le joueur. */
+furniture({
+  key: 'switch2',
+  name: 'Console Switch 2',
+  boxes: [
+    [0.18, 0, 0.42, 0.82, 0.3, 0.62],
+    [0.06, 0.18, 0.46, 0.94, 0.62, 0.52],
+  ],
+  boxTextures: [
+    { top: 'switch_dock', side: 'switch_dock', front: 'switch_dock_front' },
+    { top: 'switch_back', side: 'switch_back', bottom: 'switch_back', front: 'switch_screen' },
+  ],
+  hardness: 0.6,
+  emission: 4,
+});
+
+/** Tour de PC gamer : vitre latérale, ventilateurs et bandeaux lumineux. */
+furniture({
+  key: 'gaming_pc',
+  name: 'PC gamer',
+  boxes: [[0.24, 0, 0.08, 0.76, 0.94, 0.92]],
+  boxTextures: [{ top: 'pc_top', bottom: 'pc_dark', side: 'pc_side', front: 'pc_front' }],
+  hardness: 1.5,
+  emission: 8,
+});
+
+/** Écran gamer et son clavier rétroéclairé. */
+furniture({
+  key: 'gaming_monitor',
+  name: 'Écran gamer',
+  boxes: [
+    [0.34, 0, 0.56, 0.66, 0.05, 0.8],
+    [0.46, 0.05, 0.64, 0.54, 0.34, 0.7],
+    [0.02, 0.28, 0.56, 0.98, 0.86, 0.64],
+    [0.08, 0, 0.06, 0.92, 0.06, 0.36],
+  ],
+  boxTextures: [
+    { side: 'pc_dark' },
+    { side: 'pc_dark' },
+    { side: 'pc_dark', front: 'monitor_screen' },
+    { top: 'keyboard_rgb', side: 'pc_dark' },
+  ],
+  hardness: 1,
+  emission: 6,
+});
+
+/** Siège gamer : piétement étoile, vérin, assise, haut dossier baquet. */
+furniture({
+  key: 'gaming_chair',
+  name: 'Siège gamer',
+  boxes: [
+    [0.14, 0, 0.14, 0.86, 0.08, 0.86],
+    [0.44, 0.08, 0.44, 0.56, 0.36, 0.56],
+    [0.12, 0.36, 0.1, 0.88, 0.5, 0.86],
+    [0.14, 0.5, 0.74, 0.86, 1, 0.9],
+  ],
+  boxTextures: [
+    { side: 'chair_black' },
+    { side: 'pc_dark' },
+    { top: 'chair_seat', side: 'chair_black' },
+    { side: 'chair_black', top: 'chair_black', front: 'chair_back' },
+  ],
+  hardness: 0.8,
+  sound: 'wool',
+  tool: 'axe',
+});
+
+/** Bureau gamer : un plateau noir cerclé de lumière sur deux pieds pleins. */
+define('gaming_desk', {
+  name: 'Bureau gamer',
+  textures: 'desk_top',
+  layer: RenderLayer.Cutout,
+  opaque: false,
+  lightFilter: 0,
+  hardness: 1.5,
+  tool: 'axe',
+  sound: 'wood',
+  emission: 3,
+  boxes: [
+    [0, 0.8, 0, 1, 0.92, 1],
+    [0.04, 0, 0.1, 0.14, 0.8, 0.9],
+    [0.86, 0, 0.1, 0.96, 0.8, 0.9],
+  ],
+  boxTextures: [
+    { top: 'desk_top', bottom: 'pc_dark', side: 'desk_edge' },
+    { side: 'pc_dark' },
+    { side: 'pc_dark' },
+  ],
+  stretch: true,
+});
+
+/** Lampe RGB : un cube de lumière aux couleurs de l'arc-en-ciel. */
+define('rgb_lamp', { name: 'Lampe RGB', textures: 'rgb_lamp', hardness: 0.3, emission: 15, sound: 'glass' });
+
+/** Djembé : fût de bois sculpté, peau tendue. Clic droit pour en jouer. */
+define('djembe', {
+  name: 'Djembé',
+  textures: 'djembe_side',
+  layer: RenderLayer.Cutout,
+  opaque: false,
+  lightFilter: 0,
+  hardness: 0.8,
+  tool: 'axe',
+  sound: 'wood',
+  flammable: true,
+  boxes: [
+    [0.3, 0, 0.3, 0.7, 0.42, 0.7],
+    [0.2, 0.42, 0.2, 0.8, 0.92, 0.8],
+    [0.18, 0.84, 0.18, 0.82, 0.94, 0.82],
+  ],
+  boxTextures: [
+    { side: 'djembe_wood', top: 'djembe_wood', bottom: 'djembe_wood' },
+    { side: 'djembe_side', top: 'djembe_skin', bottom: 'djembe_wood' },
+    { side: 'djembe_rim', top: 'djembe_skin', bottom: 'djembe_wood' },
+  ],
+  stretch: true,
+});
+
+// --- Bases secrètes -----------------------------------------------------------
+
+/**
+ * Faux blocs : ils ont l'air pleins, mais on passe au travers. Un mur de
+ * pierre qui n'en est pas un, une pelouse qui cache un puits.
+ */
+define('fake_stone_bricks', {
+  name: 'Fausse brique de pierre', textures: 'stone_bricks', solid: false, hardness: 1.5, tool: 'pickaxe',
+});
+define('fake_bookshelf', {
+  name: 'Fausse bibliothèque',
+  textures: { top: 'oak_planks', bottom: 'oak_planks', side: 'bookshelf' },
+  solid: false, hardness: 1.5, tool: 'axe', sound: 'wood', flammable: true,
+});
+define('fake_grass', {
+  name: 'Fausse herbe',
+  textures: { top: 'grass_top', bottom: 'dirt', side: 'grass_side' },
+  solid: false, hardness: 0.6, tool: 'shovel', sound: 'grass', tint: GRASS_TINT,
+});
+
+/**
+ * Portes secrètes : fermées, rien ne les distingue d'un mur. Un clic droit (ou
+ * un levier voisin) les escamote dans le sol, avec toutes leurs voisines.
+ */
+const SUNK: Box = [0, 0, 0, 1, 1 / 16, 1];
+for (const [key, name, textures, sound, tool] of [
+  ['secret_bookshelf', 'Bibliothèque secrète', { top: 'oak_planks', bottom: 'oak_planks', side: 'bookshelf' }, 'wood', 'axe'],
+  ['secret_stone', 'Mur secret', { top: 'stone_bricks', bottom: 'stone_bricks', side: 'stone_bricks' }, 'stone', 'pickaxe'],
+] as const) {
+  define(`${key}_closed`, { name, textures, hardness: 2, tool, sound, drop: key });
+  define(`${key}_open`, {
+    name, textures, layer: RenderLayer.Cutout, opaque: false, lightFilter: 0,
+    solid: false, hardness: 2, tool, sound, drop: key, boxes: [SUNK],
+  });
+}
+
+/** Levier : il ouvre et ferme les portes secrètes alentour. */
+for (const state of ['off', 'on'] as const) {
+  const z0 = state === 'off' ? 0.56 : 0.32;
+  define(`lever_${state}`, {
+    name: 'Levier',
+    textures: 'cobblestone',
+    layer: RenderLayer.Cutout,
+    opaque: false,
+    lightFilter: 0,
+    solid: false,
+    hardness: 0.5,
+    sound: 'stone',
+    emission: state === 'on' ? 5 : 0,
+    drop: 'lever',
+    boxes: [
+      [0.3, 0, 0.24, 0.7, 0.12, 0.76],
+      [0.45, 0.12, z0, 0.55, 0.58, z0 + 0.1],
+      [0.42, 0.58, z0 - 0.03, 0.58, 0.72, z0 + 0.13],
+    ],
+    boxTextures: [
+      { side: 'cobblestone' },
+      { side: 'lever_handle' },
+      { side: state === 'on' ? 'lever_knob_on' : 'lever_knob_off' },
+    ],
+    stretch: true,
+  });
+}
+
 export const AIR = 0;
 export const BLOCK_COUNT = BLOCKS.length;
 
@@ -951,8 +1217,8 @@ export const MAX_Y = new Float32Array(BLOCK_COUNT);
 export const IS_PARTIAL = new Uint8Array(BLOCK_COUNT);
 /** Nombre de boîtes composant le bloc (1 pour un cube ou une dalle, 2 pour un escalier). */
 export const SHAPE_COUNT = new Uint8Array(BLOCK_COUNT);
-/** Boîtes aplaties : six flottants par boîte, deux boîtes par bloc au plus. */
-export const MAX_BOXES = 2;
+/** Boîtes aplaties : six flottants par boîte, quatre boîtes par bloc au plus. */
+export const MAX_BOXES = 4;
 export const SHAPE_BOXES = new Float32Array(BLOCK_COUNT * MAX_BOXES * 6);
 /** [top, bottom, side] aplatis par identifiant de bloc. */
 export const TEX_LAYERS = new Uint16Array(BLOCK_COUNT * 3);
@@ -962,6 +1228,13 @@ export const ROT_TOP = new Uint8Array(BLOCK_COUNT);
 export const IS_CLIMBABLE = new Uint8Array(BLOCK_COUNT);
 /** Portillon : une barrière voisine s'y raccorde. */
 export const IS_GATE = new Uint8Array(BLOCK_COUNT);
+/** Textures par boîte : [dessus, dessous, côté, façade] × MAX_BOXES. */
+export const BOX_TEX = new Uint16Array(BLOCK_COUNT * MAX_BOXES * 4);
+/** Direction de la façade : 0 aucune, 1 nord (-Z), 2 sud (+Z), 3 ouest (-X), 4 est (+X). */
+export const FRONT_DIR = new Uint8Array(BLOCK_COUNT);
+/** Textures étirées sur chaque face (meubles). */
+export const STRETCH_UV = new Uint8Array(BLOCK_COUNT);
+const FRONT_CODE = { north: 1, south: 2, west: 3, east: 4 } as const;
 
 for (const b of BLOCKS) {
   IS_OPAQUE[b.id] = b.opaque ? 1 : 0;
@@ -987,6 +1260,18 @@ for (const b of BLOCKS) {
   ROT_TOP[b.id] = b.rotTop;
   IS_CLIMBABLE[b.id] = b.climbable ? 1 : 0;
   IS_GATE[b.id] = b.key.startsWith('oak_fence_gate_') ? 1 : 0;
+  FRONT_DIR[b.id] = b.front ? FRONT_CODE[b.front] : 0;
+  STRETCH_UV[b.id] = b.stretch ? 1 : 0;
+  for (let k = 0; k < MAX_BOXES; k++) {
+    const bt = b.boxTextures?.[k];
+    const top = bt?.top ?? bt?.side ?? b.textures.top;
+    const side = bt?.side ?? b.textures.side;
+    const o = (b.id * MAX_BOXES + k) * 4;
+    BOX_TEX[o] = tex(top);
+    BOX_TEX[o + 1] = tex(bt?.bottom ?? bt?.top ?? bt?.side ?? b.textures.bottom);
+    BOX_TEX[o + 2] = tex(side);
+    BOX_TEX[o + 3] = tex(bt?.front ?? (bt ? side : b.textures.front ?? side));
+  }
 }
 
 export const TEXTURE_NAMES: readonly string[] = TEXTURE_ORDER;

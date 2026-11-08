@@ -150,7 +150,7 @@ export class ChunkManager {
     const c = this.world.chunks.get(key);
     if (!c) return; // déchargé entre-temps
 
-    c.blocks.set(new Uint8Array(res.blocks));
+    c.blocks.set(new Uint16Array(res.blocks));
     c.biomes.set(new Uint8Array(res.biomes));
     c.height.set(new Uint8Array(res.heightmap));
     c.maxHeight = 0;

@@ -6,7 +6,7 @@
  * procédural à partir de leur couleur dominante.
  */
 
-import { BLOCKS, RenderKind } from '../world/blocks';
+import { BLOCKS, BOX_TEX, MAX_BOXES, RenderKind } from '../world/blocks';
 import { ITEMS, type ItemDef } from '../items/items';
 import type { Atlas } from '../render/atlas';
 import { TILE } from '../render/atlas';
@@ -64,8 +64,24 @@ function blockIcon(def: ItemDef, atlas: Atlas): string {
     return finish(canvas, data);
   }
 
-  const top = atlas.tileData(block.layers.top);
-  const side = atlas.tileData(block.layers.side);
+  // Un meuble se montre de face : on cherche la boîte qui porte la façade.
+  let topLayer = block.layers.top;
+  let leftLayer = block.layers.side;
+  let rightLayer = block.layers.side;
+  if (block.front) {
+    for (let k = 0; k < MAX_BOXES; k++) {
+      const o = (block.id * MAX_BOXES + k) * 4;
+      if (BOX_TEX[o + 3] !== BOX_TEX[o + 2]) { leftLayer = BOX_TEX[o + 3]; rightLayer = BOX_TEX[o + 2]; break; }
+    }
+  } else if (block.boxTextures) {
+    // Djembé, bureau… : la boîte la plus parlante est la deuxième.
+    const o = (block.id * MAX_BOXES + Math.min(1, block.boxTextures.length - 1)) * 4;
+    topLayer = BOX_TEX[o];
+    leftLayer = rightLayer = BOX_TEX[o + 2];
+  }
+  const top = atlas.tileData(topLayer);
+  const side = atlas.tileData(leftLayer);
+  const sideR = atlas.tileData(rightLayer);
   const H = SIZE / 2; // demi-largeur du cube
 
   for (let py = 0; py < SIZE; py++) {
@@ -92,7 +108,7 @@ function blockIcon(def: ItemDef, atlas: Atlas): string {
       const rs = (px - H) / H;
       const rt = (py - H + (H / 2) * rs) / H;
       if (rs >= 0 && rs <= 1 && rt >= 0 && rt <= 1) {
-        const [r, g, b, al] = sampleTile(side, rs, rt, tint, 0.55);
+        const [r, g, b, al] = sampleTile(sideR, rs, rt, tint, 0.55);
         if (al > 40) put(px, py, r, g, b, 255);
       }
     }
@@ -193,6 +209,65 @@ function armorIcon(def: ItemDef): string {
   return finish(canvas, data);
 }
 
+/** Armes, munitions et véhicules : des silhouettes reconnaissables. */
+function gearIcon(def: ItemDef): string {
+  const { canvas, data, put } = newCanvas();
+  const c = def.color;
+  switch (def.key) {
+    case 'pistol':
+      rect(put, 3, 5, 10, 3, c, 1.1);
+      rect(put, 9, 8, 3, 5, 0x5a3a20);
+      rect(put, 7, 8, 2, 2, c, 0.7);
+      rect(put, 3, 5, 1, 1, 0xd8d8d8);
+      break;
+    case 'machine_gun':
+      rect(put, 1, 6, 14, 3, c, 1.15);
+      rect(put, 0, 7, 2, 1, 0x6a6a70);
+      rect(put, 6, 9, 3, 5, 0x6a6a70);
+      rect(put, 11, 9, 3, 4, 0x5a3a20);
+      rect(put, 12, 4, 2, 2, c, 0.8);
+      break;
+    case 'bazooka':
+      rect(put, 1, 5, 14, 4, c, 1.1);
+      rect(put, 0, 4, 2, 6, c, 0.7);
+      rect(put, 7, 9, 2, 4, 0x3a3a3a);
+      rect(put, 5, 3, 3, 2, 0x2a2a2a);
+      break;
+    case 'bullets':
+      for (const x of [3, 7, 11]) { rect(put, x, 6, 2, 7, 0xc89030); rect(put, x, 4, 2, 2, 0xb06a30); }
+      break;
+    case 'rocket':
+      rect(put, 6, 3, 4, 9, c, 1.05);
+      rect(put, 7, 1, 2, 2, 0xc03020);
+      rect(put, 4, 10, 2, 3, c, 0.7);
+      rect(put, 10, 10, 2, 3, c, 0.7);
+      break;
+    case 'tank_shell':
+      rect(put, 5, 5, 6, 9, 0xc89030);
+      rect(put, 5, 2, 6, 3, c);
+      rect(put, 6, 1, 4, 1, c, 0.8);
+      break;
+    case 'tank':
+      rect(put, 1, 9, 14, 4, 0x2a2a26);
+      rect(put, 2, 7, 12, 3, c);
+      rect(put, 5, 4, 6, 3, c, 1.15);
+      rect(put, 11, 5, 5, 1, c, 0.8);
+      for (const x of [2, 5, 8, 11]) rect(put, x, 11, 2, 1, 0x6a6a60);
+      break;
+    default: {
+      // Voiture : caisse basse, cabine vitrée, deux roues.
+      rect(put, 1, 7, 14, 4, c);
+      rect(put, 4, 4, 7, 3, 0x2a3a4a);
+      rect(put, 4, 4, 7, 1, c, 0.85);
+      rect(put, 1, 7, 2, 1, 0xfff6c0);
+      rect(put, 2, 10, 3, 3, 0x141414);
+      rect(put, 11, 10, 3, 3, 0x141414);
+      break;
+    }
+  }
+  return finish(canvas, data);
+}
+
 function simpleIcon(def: ItemDef): string {
   const { canvas, data, put } = newCanvas();
   const c = def.color;
@@ -252,6 +327,7 @@ export function buildIcons(atlas: Atlas): void {
     if (def.icon === 'block') url = blockIcon(def, atlas);
     else if (def.icon === 'tool') url = toolIcon(def);
     else if (def.icon === 'armor') url = armorIcon(def);
+    else if (def.icon === 'gun' || def.icon === 'ammo' || def.icon === 'vehicle') url = gearIcon(def);
     else url = simpleIcon(def);
     cache.set(def.id, url);
   }

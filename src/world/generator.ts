@@ -36,7 +36,7 @@ export const ONEBLOCK_Y = 64;
 export const ONEBLOCK_Z = 0;
 
 export interface GenResult {
-  blocks: Uint8Array;
+  blocks: Uint16Array;
   biomes: Uint8Array;
   heightmap: Uint8Array;
   /** Débordements de structures : quadruplets [xWorld, y, zWorld, blockId]. */
@@ -209,7 +209,7 @@ export class TerrainGenerator {
   // --- Génération d'un chunk ---------------------------------------------
 
   generate(cx: number, cz: number): GenResult {
-    const blocks = new Uint8Array(CHUNK_X * CHUNK_Z * WORLD_HEIGHT);
+    const blocks = new Uint16Array(CHUNK_X * CHUNK_Z * WORLD_HEIGHT);
     const heightmap = new Uint8Array(CHUNK_X * CHUNK_Z);
     const biomes = new Uint8Array(CHUNK_X * CHUNK_Z);
     const overflow: number[] = [];
@@ -335,7 +335,7 @@ export class TerrainGenerator {
   }
 
   /** Bedrock, trois couches de terre, une d'herbe : rien d'autre. */
-  private generateFlat(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array): GenResult {
+  private generateFlat(blocks: Uint16Array, heightmap: Uint8Array, biomes: Uint8Array): GenResult {
     const top = 4;
     for (let lz = 0; lz < CHUNK_Z; lz++) {
       for (let lx = 0; lx < CHUNK_X; lx++) {
@@ -354,7 +354,7 @@ export class TerrainGenerator {
    * unique bloc à l'origine. Tout le reste vient de ce bloc, que le jeu
    * régénère à chaque fois qu'on le casse.
    */
-  private generateOneblock(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
+  private generateOneblock(blocks: Uint16Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
     biomes.fill(Biome.Plains);
     const lx = ONEBLOCK_X - cx * CHUNK_X;
     const lz = ONEBLOCK_Z - cz * CHUNK_Z;
@@ -373,7 +373,7 @@ export class TerrainGenerator {
    * colonnes — d'où les voûtes, les surplombs et les puits verticaux.
    * Les creux sous le niveau 26 se remplissent de lave.
    */
-  private generateNether(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
+  private generateNether(blocks: Uint16Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
     const ox = cx * CHUNK_X;
     const oz = cz * CHUNK_Z;
     const rnd = mulberry32((cx * 341873128712 + cz * 132897987541 + this.seed + 7717) | 0);
@@ -449,7 +449,7 @@ export class TerrainGenerator {
    * L'End : des îles de pierre de l'End flottant dans le vide. Une île centrale
    * autour de l'origine — celle où l'on arrive — puis un archipel dispersé.
    */
-  private generateEnd(blocks: Uint8Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
+  private generateEnd(blocks: Uint16Array, heightmap: Uint8Array, biomes: Uint8Array, cx: number, cz: number): GenResult {
     const ox = cx * CHUNK_X;
     const oz = cz * CHUNK_Z;
     const rnd = mulberry32((cx * 341873128712 + cz * 132897987541 + this.seed + 4242) | 0);
@@ -498,7 +498,7 @@ export class TerrainGenerator {
    * bornes sont simplement ignorés : le chunk voisin rejouera la même
    * construction et posera sa part. Rien à propager, rien à synchroniser.
    */
-  private structCtx(blocks: Uint8Array, ox: number, oz: number, onChest?: (x: number, y: number, z: number, k: LootKind) => void): StructCtx {
+  private structCtx(blocks: Uint16Array, ox: number, oz: number, onChest?: (x: number, y: number, z: number, k: LootKind) => void): StructCtx {
     return {
       seed: this.seed,
       heightAt: (x, z) => this.heightAt(x, z),
@@ -532,7 +532,7 @@ export class TerrainGenerator {
   }
 
   /** Pose les structures dont l'emprise recoupe le chunk. */
-  private placeStructures(blocks: Uint8Array, cx: number, cz: number): void {
+  private placeStructures(blocks: Uint16Array, cx: number, cz: number): void {
     const realm = this.realm;
     if (!realm) return;
     const ox = cx * CHUNK_X;
@@ -578,7 +578,7 @@ export class TerrainGenerator {
 
   // --- Minerais -----------------------------------------------------------
 
-  private placeOres(blocks: Uint8Array, cx: number, cz: number): void {
+  private placeOres(blocks: Uint16Array, cx: number, cz: number): void {
     const rnd = mulberry32((cx * 341873128712 + cz * 132897987541 + this.seed) | 0);
     const veins: [number, number, number, number, number][] = [
       // [bloc, tentatives, taille, yMin, yMax]
@@ -620,7 +620,7 @@ export class TerrainGenerator {
 
   // --- Décoration ---------------------------------------------------------
 
-  private decorate(blocks: Uint8Array, heightmap: Uint8Array, cx: number, cz: number, overflow: number[]): void {
+  private decorate(blocks: Uint16Array, heightmap: Uint8Array, cx: number, cz: number, overflow: number[]): void {
     const ox = cx * CHUNK_X;
     const oz = cz * CHUNK_Z;
     const rnd = mulberry32((cx * 1013904223 + cz * 1664525 + this.seed * 22695477) | 0);
@@ -633,7 +633,7 @@ export class TerrainGenerator {
         const idx = voxelIndex(lx, wy, lz);
         if (force || blocks[idx] === 0) blocks[idx] = id;
       } else {
-        overflow.push(wx, wy, wz, force ? id | 0x100 : id);
+        overflow.push(wx, wy, wz, force ? id | 0x10000 : id);
       }
     };
 
@@ -713,7 +713,7 @@ export class TerrainGenerator {
     }
   }
 
-  private nearWater(blocks: Uint8Array, lx: number, y: number, lz: number): boolean {
+  private nearWater(blocks: Uint16Array, lx: number, y: number, lz: number): boolean {
     const dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
     for (const [dx, dz] of dirs) {
       const x = lx + dx, z = lz + dz;

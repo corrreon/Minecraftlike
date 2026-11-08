@@ -11,7 +11,7 @@
  */
 
 import { CHUNK_X, CHUNK_Z, WORLD_HEIGHT } from '../core/constants';
-import { IS_GATE, IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, ROT_TOP, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
+import { BOX_TEX, FRONT_DIR, STRETCH_UV, IS_GATE, IS_OPAQUE, IS_PARTIAL, MAX_BOXES, RENDER_KIND, RENDER_LAYER, SHAPE_BOXES, SHAPE_COUNT, ROT_TOP, TEX_LAYERS, TINTS, RenderKind, RenderLayer } from './blocks';
 
 export const PAD = 1;
 export const PX = CHUNK_X + 2 * PAD;
@@ -171,7 +171,7 @@ const maskExtra = [new Int32Array(MASK_SIZE), new Int32Array(MASK_SIZE)];
 const quadPos = new Float32Array(12);
 const quadUv = new Float32Array(8);
 
-export function meshChunk(blocks: Uint8Array, light: Uint8Array): MeshResult {
+export function meshChunk(blocks: Uint16Array, light: Uint8Array): MeshResult {
   const builders = [new LayerBuilder(4096), new LayerBuilder(1024), new LayerBuilder(512)];
 
   const getBlock = (x: number, y: number, z: number): number => {
@@ -447,7 +447,7 @@ export function meshChunk(blocks: Uint8Array, light: Uint8Array): MeshResult {
 const CROSS_POS = new Float32Array(12);
 const CROSS_UV = new Float32Array(8);
 
-function emitCrosses(blocks: Uint8Array, light: Uint8Array, out: LayerBuilder): void {
+function emitCrosses(blocks: Uint16Array, light: Uint8Array, out: LayerBuilder): void {
   for (let y = 0; y < WORLD_HEIGHT; y++) {
     for (let z = 0; z < CHUNK_Z; z++) {
       for (let x = 0; x < CHUNK_X; x++) {
@@ -592,7 +592,7 @@ function emitFence(
  * Ils échappent au greedy meshing : leurs faces ne s'alignent pas sur la
  * grille, et les fusionner demanderait de comparer aussi les hauteurs.
  */
-function emitPartials(blocks: Uint8Array, light: Uint8Array, builders: LayerBuilder[]): void {
+function emitPartials(blocks: Uint16Array, light: Uint8Array, builders: LayerBuilder[]): void {
   const getBlock = (x: number, y: number, z: number): number => {
     if (y < 0) return 6;
     if (y >= WORLD_HEIGHT) return 0;
@@ -632,13 +632,18 @@ function emitPartials(blocks: Uint8Array, light: Uint8Array, builders: LayerBuil
           // que le voisin de ce côté est plein. Une boîte qui s'arrête au
           // milieu du cube montre toujours ses flancs — c'est ce qui donne à
           // l'escalier sa marche.
+          // Chaque boîte a ses textures : un meuble mêle écran, coque et pied.
+          // La façade remplace le flanc du côté où regarde le meuble.
+          const t = (id * MAX_BOXES + k) * 4;
+          const front = FRONT_DIR[id];
+          const side = BOX_TEX[t + 2], face = BOX_TEX[t + 3];
           const faces: [number, number, number, number, boolean][] = [
-            [0, 1, 0, TEX_LAYERS[id * 3 + 0], by1 >= 1 && IS_OPAQUE[getBlock(x, y + 1, z)] === 1],
-            [0, -1, 0, TEX_LAYERS[id * 3 + 1], by0 <= 0 && IS_OPAQUE[getBlock(x, y - 1, z)] === 1],
-            [0, 0, 1, TEX_LAYERS[id * 3 + 2], bz1 >= 1 && (IS_OPAQUE[getBlock(x, y, z + 1)] === 1 || getBlock(x, y, z + 1) === id)],
-            [0, 0, -1, TEX_LAYERS[id * 3 + 2], bz0 <= 0 && (IS_OPAQUE[getBlock(x, y, z - 1)] === 1 || getBlock(x, y, z - 1) === id)],
-            [1, 0, 0, TEX_LAYERS[id * 3 + 2], bx1 >= 1 && (IS_OPAQUE[getBlock(x + 1, y, z)] === 1 || getBlock(x + 1, y, z) === id)],
-            [-1, 0, 0, TEX_LAYERS[id * 3 + 2], bx0 <= 0 && (IS_OPAQUE[getBlock(x - 1, y, z)] === 1 || getBlock(x - 1, y, z) === id)],
+            [0, 1, 0, BOX_TEX[t], by1 >= 1 && IS_OPAQUE[getBlock(x, y + 1, z)] === 1],
+            [0, -1, 0, BOX_TEX[t + 1], by0 <= 0 && IS_OPAQUE[getBlock(x, y - 1, z)] === 1],
+            [0, 0, 1, front === 2 ? face : side, bz1 >= 1 && (IS_OPAQUE[getBlock(x, y, z + 1)] === 1 || getBlock(x, y, z + 1) === id)],
+            [0, 0, -1, front === 1 ? face : side, bz0 <= 0 && (IS_OPAQUE[getBlock(x, y, z - 1)] === 1 || getBlock(x, y, z - 1) === id)],
+            [1, 0, 0, front === 4 ? face : side, bx1 >= 1 && (IS_OPAQUE[getBlock(x + 1, y, z)] === 1 || getBlock(x + 1, y, z) === id)],
+            [-1, 0, 0, front === 3 ? face : side, bx0 <= 0 && (IS_OPAQUE[getBlock(x - 1, y, z)] === 1 || getBlock(x - 1, y, z) === id)],
           ];
 
           for (const [nx, ny, nz, tex, culled] of faces) {
@@ -672,8 +677,9 @@ function emitPartials(blocks: Uint8Array, light: Uint8Array, builders: LayerBuil
             // Les UV suivent l'emprise réelle de la boîte : une demi-marche ne
             // doit pas étirer la texture sur un bloc entier.
             const U = BOX_UV;
-            const uw = ny !== 0 ? bx1 - bx0 : nx !== 0 ? bz1 - bz0 : bx1 - bx0;
-            const vh = ny !== 0 ? bz1 - bz0 : by1 - by0;
+            const stretch = STRETCH_UV[id] === 1;
+            const uw = stretch ? 1 : ny !== 0 ? bx1 - bx0 : nx !== 0 ? bz1 - bz0 : bx1 - bx0;
+            const vh = stretch ? 1 : ny !== 0 ? bz1 - bz0 : by1 - by0;
             U[0] = 0; U[1] = 0; U[2] = uw; U[3] = 0; U[4] = uw; U[5] = vh; U[6] = 0; U[7] = vh;
             // Le motif du dessus peut avoir un sens : l'oreiller d'un lit doit
             // pointer vers la tête. On fait tourner les coins d'un quart de

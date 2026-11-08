@@ -30,7 +30,7 @@ export type MobKind =
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
   | 'blaze' | 'enderman' | 'ender_dragon' | 'piglin'
-  | 'plane';
+  | 'plane' | 'tank' | 'lamborghini' | 'tesla' | 'porsche';
 
 interface MobPart {
   name: string;
@@ -38,7 +38,7 @@ interface MobPart {
   offset: [number, number, number];
   color: number;
   /** Type d'animation appliqué à la pièce. */
-  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'prop' | 'none';
+  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'prop' | 'wheel' | 'turret' | 'none';
 }
 
 interface MobTraits {
@@ -65,11 +65,35 @@ interface MobTraits {
    * tient en l'air que tant qu'il a de la vitesse.
    */
   aircraft?: boolean;
+  /** Véhicule terrestre piloté : voiture ou tank. */
+  vehicle?: VehicleSpec;
+  /** Engin (avion, voiture, tank) : ni IA, ni errance, ni disparition au loin. */
+  machine?: boolean;
   /**
    * Boss : tourne en orbite autour du centre de l'île et pique sur le joueur.
    * `[rayon, altitude]` de l'orbite.
    */
   orbit?: [number, number];
+}
+
+export interface VehicleSpec {
+  /** Vitesse de pointe en marche avant, en blocs par seconde. */
+  max: number;
+  /** Vitesse de pointe en marche arrière. */
+  reverse: number;
+  /** Accélération et freinage, en blocs par seconde carrée. */
+  accel: number;
+  brake: number;
+  /** Ralentissement moteur coupé. */
+  drag: number;
+  /** Vitesse de braquage, en radians par seconde. */
+  turn: number;
+  /** Chenilles : le tank pivote sur place, une voiture doit rouler pour tourner. */
+  tracks?: boolean;
+  /** Canon en tourelle, orienté par le regard du pilote. */
+  cannon?: boolean;
+  /** Hauteur des yeux du pilote au-dessus du plancher, en fraction de hauteur. */
+  seat: number;
 }
 
 interface MobDef extends MobTraits {
@@ -101,6 +125,18 @@ const M = (
   parts: MobPart[],
   traits: MobTraits = {},
 ): MobDef => ({ name, hostile, health, speed, width, height, damage, aggroRange, xp, drops, parts, ...traits });
+
+/** Quatre roues avec leurs jantes, aux coins d'une voiture. */
+function wheels(x: number, z: number, rim: number): MobPart[] {
+  const out: MobPart[] = [];
+  for (const sx of [-1, 1]) {
+    for (const sz of [-1, 1]) {
+      out.push({ name: 'roue', size: [0.32, 0.5, 0.5], offset: [sx * x, 0.25, sz * z], color: 0x141414, anim: 'wheel' });
+      out.push({ name: 'jante', size: [0.34, 0.22, 0.22], offset: [sx * (x + 0.01), 0.25, sz * z], color: rim, anim: 'wheel' });
+    }
+  }
+  return out;
+}
 
 // Les dimensions sont exprimées en blocs (1 bloc = 1 unité).
 export const MOBS: Record<MobKind, MobDef> = {
@@ -432,7 +468,77 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'roueR', size: [0.28, 0.28, 0.16], offset: [0.5, 0.18, -0.6], color: 0x1c1c20 },
       { name: 'roulette', size: [0.2, 0.2, 0.12], offset: [0, 0.16, 1.35], color: 0x1c1c20 },
     ],
-    { rideable: true, aircraft: true }),
+    { rideable: true, aircraft: true, machine: true }),
+
+  // --- Véhicules ------------------------------------------------------------
+  // Tous regardent vers -Z, comme les créatures. Les roues tournent avec la
+  // distance parcourue, la tourelle du tank suit le regard du pilote.
+  tank: M('Tank', false, 120, 0, 2.6, 1.9, 0, 0, 0, [],
+    [
+      { name: 'caisse', size: [2.4, 0.7, 4.0], offset: [0, 0.75, 0], color: 0x56653a },
+      { name: 'glacis', size: [2.3, 0.3, 0.6], offset: [0, 0.95, -2.1], color: 0x4a5832 },
+      { name: 'chenilleL', size: [0.55, 0.75, 4.3], offset: [-1.3, 0.38, 0], color: 0x2a2a26 },
+      { name: 'chenilleR', size: [0.55, 0.75, 4.3], offset: [1.3, 0.38, 0], color: 0x2a2a26 },
+      ...[-1.5, -0.5, 0.5, 1.5].flatMap((z): MobPart[] => [
+        { name: 'galetL', size: [0.6, 0.32, 0.32], offset: [-1.3, 0.3, z], color: 0x55554a, anim: 'wheel' },
+        { name: 'galetR', size: [0.6, 0.32, 0.32], offset: [1.3, 0.3, z], color: 0x55554a, anim: 'wheel' },
+      ]),
+      { name: 'tourelle', size: [1.7, 0.6, 1.8], offset: [0, 1.4, 0.2], color: 0x5f7040, anim: 'turret' },
+      { name: 'trappe', size: [0.6, 0.12, 0.6], offset: [0.3, 1.76, 0.5], color: 0x4a5832, anim: 'turret' },
+      { name: 'etoile', size: [0.3, 0.3, 0.04], offset: [-0.86, 1.45, 0.2], color: 0xe8e8e0, anim: 'turret' },
+      { name: 'canon', size: [0.22, 0.22, 2.4], offset: [0, 1.42, -1.9], color: 0x4a5832, anim: 'turret' },
+      { name: 'bouche', size: [0.32, 0.32, 0.3], offset: [0, 1.42, -3.05], color: 0x2e3620, anim: 'turret' },
+    ],
+    { rideable: true, machine: true, vehicle: { max: 8, reverse: 4, accel: 5, brake: 14, drag: 4, turn: 1.3, tracks: true, cannon: true, seat: 0.55 } }),
+
+  lamborghini: M('Lamborghini', false, 60, 0, 2.0, 1.1, 0, 0, 0, [],
+    [
+      { name: 'caisse', size: [1.9, 0.42, 3.8], offset: [0, 0.45, 0], color: 0x9ad81e },
+      { name: 'capot', size: [1.8, 0.16, 1.2], offset: [0, 0.72, -1.2], color: 0xa8e42e },
+      { name: 'cabine', size: [1.4, 0.36, 1.5], offset: [0, 0.84, 0.15], color: 0x1a2230 },
+      { name: 'toit', size: [1.3, 0.06, 1.1], offset: [0, 1.04, 0.25], color: 0x9ad81e },
+      { name: 'aileron', size: [1.8, 0.08, 0.4], offset: [0, 1.0, 1.75], color: 0x141414 },
+      { name: 'mat1', size: [0.1, 0.25, 0.1], offset: [-0.6, 0.8, 1.75], color: 0x141414 },
+      { name: 'mat2', size: [0.1, 0.25, 0.1], offset: [0.6, 0.8, 1.75], color: 0x141414 },
+      { name: 'ouieL', size: [0.04, 0.18, 0.5], offset: [-0.96, 0.55, 0.6], color: 0x141414 },
+      { name: 'ouieR', size: [0.04, 0.18, 0.5], offset: [0.96, 0.55, 0.6], color: 0x141414 },
+      { name: 'phareL', size: [0.4, 0.08, 0.05], offset: [-0.6, 0.6, -1.91], color: 0xfff6c0 },
+      { name: 'phareR', size: [0.4, 0.08, 0.05], offset: [0.6, 0.6, -1.91], color: 0xfff6c0 },
+      { name: 'feuL', size: [0.5, 0.08, 0.05], offset: [-0.6, 0.6, 1.91], color: 0xe01010 },
+      { name: 'feuR', size: [0.5, 0.08, 0.05], offset: [0.6, 0.6, 1.91], color: 0xe01010 },
+      ...wheels(0.85, 1.25, 0xc8c8d0),
+    ],
+    { rideable: true, machine: true, vehicle: { max: 30, reverse: 7, accel: 13, brake: 26, drag: 3, turn: 2.0, seat: 0.2 } }),
+
+  tesla: M('Tesla', false, 60, 0, 2.0, 1.45, 0, 0, 0, [],
+    [
+      { name: 'caisse', size: [1.9, 0.55, 4.2], offset: [0, 0.5, 0], color: 0xe8e8ec },
+      { name: 'cabine', size: [1.7, 0.5, 2.2], offset: [0, 1.02, 0.2], color: 0x101820 },
+      { name: 'toit', size: [1.6, 0.05, 1.8], offset: [0, 1.29, 0.25], color: 0x0c1218 },
+      { name: 'capot', size: [1.85, 0.1, 1.0], offset: [0, 0.82, -1.55], color: 0xf0f0f4 },
+      { name: 'coffre', size: [1.85, 0.1, 0.8], offset: [0, 0.82, 1.7], color: 0xf0f0f4 },
+      { name: 'phareL', size: [0.5, 0.06, 0.05], offset: [-0.62, 0.68, -2.11], color: 0xe0f0ff },
+      { name: 'phareR', size: [0.5, 0.06, 0.05], offset: [0.62, 0.68, -2.11], color: 0xe0f0ff },
+      { name: 'logo', size: [0.12, 0.12, 0.04], offset: [0, 0.62, -2.11], color: 0xc0202a },
+      { name: 'feux', size: [1.6, 0.06, 0.05], offset: [0, 0.72, 2.11], color: 0xd01010 },
+      ...wheels(0.85, 1.4, 0x3a3a40),
+    ],
+    { rideable: true, machine: true, vehicle: { max: 26, reverse: 7, accel: 18, brake: 26, drag: 3, turn: 2.0, seat: 0.35 } }),
+
+  porsche: M('Porsche', false, 60, 0, 2.0, 1.25, 0, 0, 0, [],
+    [
+      { name: 'caisse', size: [1.8, 0.45, 4.0], offset: [0, 0.45, 0], color: 0xc8202a },
+      { name: 'capot', size: [1.7, 0.14, 1.2], offset: [0, 0.74, -1.3], color: 0xd42a32 },
+      { name: 'cabine', size: [1.4, 0.42, 1.6], offset: [0, 0.95, 0.2], color: 0x1a2230 },
+      { name: 'toit', size: [1.3, 0.08, 1.2], offset: [0, 1.2, 0.25], color: 0xc8202a },
+      { name: 'poupe', size: [1.6, 0.18, 1.0], offset: [0, 0.8, 1.4], color: 0xc8202a },
+      { name: 'aileron', size: [1.5, 0.06, 0.3], offset: [0, 0.96, 1.8], color: 0xa01820 },
+      { name: 'phareL', size: [0.32, 0.22, 0.06], offset: [-0.62, 0.66, -2.0], color: 0xfff6c0 },
+      { name: 'phareR', size: [0.32, 0.22, 0.06], offset: [0.62, 0.66, -2.0], color: 0xfff6c0 },
+      { name: 'feux', size: [1.6, 0.07, 0.05], offset: [0, 0.68, 2.01], color: 0xd01010 },
+      ...wheels(0.8, 1.3, 0xd8d8e0),
+    ],
+    { rideable: true, machine: true, vehicle: { max: 28, reverse: 7, accel: 14, brake: 28, drag: 3, turn: 2.3, seat: 0.25 } }),
 };
 
 // --- Modèle de vol ---------------------------------------------------------
@@ -529,8 +635,15 @@ export class Mob {
   driveYaw = 0;
   drivePitch = 0;
   driveBrake = false;
-  /** Vitesse air de l'engin piloté. */
+  /** Vitesse air de l'engin piloté (vitesse signée pour un véhicule). */
   airspeed = 0;
+  /** Commandes d'un véhicule : accélérateur (-1 marche arrière … 1) et volant. */
+  throttle = 0;
+  steer = 0;
+  /** Orientation de la tourelle dans le repère du monde (même convention que `yaw`). */
+  turretYaw = 0;
+  /** Distance parcourue par les roues, pour les faire tourner. */
+  private wheelTurn = 0;
   /** Assiette et inclinaison du modèle, pour le rendu. */
   private pitch = 0;
   private roll = 0;
@@ -543,7 +656,7 @@ export class Mob {
   private diveTimer = 6;
   private flyTargetY = 0;
   private walkPhase = 0;
-  private parts: { mesh: Mesh; anim: MobPart['anim']; base: Vector3 }[] = [];
+  private parts: { mesh: Mesh; anim: MobPart['anim']; base: Vector3; name: string }[] = [];
   material: ShaderMaterial;
   dead = false;
   private rnd: () => number;
@@ -560,7 +673,7 @@ export class Mob {
       const mesh = new Mesh(coloredBox(p.size[0], p.size[1], p.size[2], p.color), this.material);
       mesh.position.set(p.offset[0], p.offset[1], p.offset[2]);
       this.group.add(mesh);
-      this.parts.push({ mesh, anim: p.anim, base: mesh.position.clone() });
+      this.parts.push({ mesh, anim: p.anim, base: mesh.position.clone(), name: p.name });
     }
     this.group.position.copy(this.position);
     this.wanderYaw = this.rnd() * Math.PI * 2;
@@ -577,6 +690,12 @@ export class Mob {
     // l'errance écraser les commandes une image sur deux.
     if (this.def.aircraft && this.ridden) {
       this.updateAircraft(dt, world, dayFactor);
+      return;
+    }
+    // Un véhicule garé obéit à la même physique, commandes au neutre : il
+    // finit sa course en roue libre au lieu de s'arrêter net.
+    if (this.def.vehicle) {
+      this.updateVehicle(dt, world, dayFactor, this.def.vehicle);
       return;
     }
     if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 3);
@@ -701,7 +820,7 @@ export class Mob {
           wishZ = Math.cos(this.wanderYaw) * 0.35;
         }
       }
-    } else if (!d.aircraft) {
+    } else if (!d.machine) {
       // Errance. Un engin garé, lui, ne bouge pas tout seul.
       this.wanderTimer -= dt;
       if (this.wanderTimer <= 0) {
@@ -812,7 +931,8 @@ export class Mob {
     // `atan2(dx, dz)` du reste du jeu. Sans ce demi-tour, toutes les créatures
     // avançaient à reculons et ne montraient jamais que leur arrière-train —
     // le modèle du joueur applique déjà la même correction.
-    this.group.rotation.y = this.yaw + Math.PI;
+    // L'avion garé garde la convention de son vol (voir `updateAircraft`).
+    this.group.rotation.y = this.yaw + (d.aircraft ? 0 : Math.PI);
     this.animate(planar);
 
     const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));
@@ -859,7 +979,9 @@ export class Mob {
     if (this.velocity.y < -TERMINAL_VELOCITY) this.velocity.y = -TERMINAL_VELOCITY;
 
     // L'inclinaison suit le taux de virage : l'avion se penche dans ses virages.
-    const vise = clampNum(-dYaw * 2.2, -0.7, 0.7);
+    // Un cap qui croît tourne à gauche, et une rotation positive sur Z abaisse
+    // l'aile gauche.
+    const vise = clampNum(dYaw * 2.2, -0.7, 0.7);
     this.roll += (vise - this.roll) * Math.min(1, 4 * dt);
 
     const d = this.def;
@@ -874,10 +996,13 @@ export class Mob {
     if (this.position.y < -8) { this.dead = true; return; }
 
     this.group.position.copy(this.position);
-    // Le modèle regarde vers -Z, d'où le demi-tour ; l'ordre YXZ fait tourner
-    // l'assiette et l'inclinaison dans le repère déjà orienté par le cap.
+    // Le cap de l'avion suit la convention de la caméra — on avance vers
+    // (-sin, -cos) — et le modèle regarde déjà vers -Z : aucun demi-tour,
+    // contrairement aux créatures. Avec le demi-tour, l'avion volait la queue
+    // la première. L'ordre YXZ fait tourner l'assiette et l'inclinaison dans le
+    // repère déjà orienté par le cap.
     this.group.rotation.order = 'YXZ';
-    this.group.rotation.set(-this.pitch, this.yaw + Math.PI, this.roll);
+    this.group.rotation.set(-this.pitch, this.yaw, this.roll);
     this.walkPhase += dt * (2 + this.airspeed);
     this.animate(this.airspeed);
 
@@ -885,6 +1010,99 @@ export class Mob {
     voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
     (this.material.uniforms.uLight.value as Color).copy(lightColor);
     this.material.uniforms.uFlash.value = this.hurtFlash;
+  }
+
+  /**
+   * Conduite. L'accélérateur pousse vers la vitesse de pointe, le volant fait
+   * tourner d'autant mieux qu'on roule vite ; un tank, lui, pivote sur ses
+   * chenilles même à l'arrêt.
+   */
+  private updateVehicle(dt: number, world: World, dayFactor: number, v: VehicleSpec): void {
+    if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 3);
+    let speed = this.airspeed;
+    const t = this.throttle;
+    if (this.driveBrake) {
+      speed -= Math.sign(speed) * Math.min(Math.abs(speed), v.brake * dt);
+    } else if (t > 0) {
+      // Appuyer en avant alors qu'on recule freine d'abord.
+      speed += (speed < 0 ? v.brake : v.accel) * t * dt;
+    } else if (t < 0) {
+      speed += (speed > 0 ? v.brake : v.accel) * t * dt;
+    } else {
+      speed -= Math.sign(speed) * Math.min(Math.abs(speed), v.drag * dt);
+    }
+    speed = clampNum(speed, -v.reverse, v.max);
+
+    this.inWater = isLiquid(world, this.position.x, this.position.y + 0.3, this.position.z);
+    // Dans l'eau, ça patine : on avance au pas.
+    if (this.inWater) speed = clampNum(speed, -2, 3);
+
+    // Le braquage s'inverse en marche arrière, comme au volant.
+    const grip = v.tracks ? 1 : clampNum(speed / 5, -1, 1);
+    this.yaw = wrapAngle(this.yaw - this.steer * v.turn * grip * dt);
+
+    this.velocity.x = Math.sin(this.yaw) * speed;
+    this.velocity.z = Math.cos(this.yaw) * speed;
+    if (this.inWater) {
+      this.velocity.y += (-1 - this.velocity.y) * Math.min(1, 3 * dt);
+    } else {
+      this.velocity.y -= GRAVITY * dt;
+      if (this.velocity.y < -TERMINAL_VELOCITY) this.velocity.y = -TERMINAL_VELOCITY;
+    }
+
+    const d = this.def;
+    const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: d.width, height: d.height };
+    // Un véhicule grimpe d'un bloc sans sauter : la route n'est pas plate.
+    const res = moveBox(world, box, this.velocity, dt, 1.05);
+    const moved = Math.hypot(box.x - this.position.x, box.z - this.position.z);
+    this.position.set(box.x, box.y, box.z);
+    this.onGround = res.onGround;
+    // Un mur arrête net : on ne garde pas sa vitesse contre la falaise.
+    if (res.hitX || res.hitZ) speed *= 0.2;
+    this.airspeed = Math.abs(speed) < 0.02 && t === 0 ? 0 : speed;
+    if (this.position.y < -8) { this.dead = true; return; }
+
+    // Lave : un véhicule brûle comme le reste.
+    const auxPieds = blockAt(world, this.position.x, this.position.y + 0.2, this.position.z);
+    if (auxPieds === B.lava) {
+      this.burnTick += dt;
+      if (this.burnTick >= 1) { this.burnTick -= 1; if (this.hurt(4)) return; }
+    }
+
+    this.wheelTurn += moved * Math.sign(speed || 1) / 0.25;
+    if (v.cannon) {
+      const want = this.ridden ? this.driveYaw : this.yaw;
+      this.turretYaw = wrapAngle(this.turretYaw + wrapAngle(want - this.turretYaw) * Math.min(1, 4 * dt));
+    }
+
+    this.group.position.copy(this.position);
+    this.group.rotation.set(0, this.yaw + Math.PI, 0);
+    this.animate(Math.abs(speed));
+
+    const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));
+    voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
+    (this.material.uniforms.uLight.value as Color).copy(lightColor);
+    this.material.uniforms.uFlash.value = this.hurtFlash;
+  }
+
+  /**
+   * Vue depuis le siège : toit et vitrage, vus de l'intérieur, boucheraient
+   * tout le haut de l'écran. On les masque tant que le pilote est dedans.
+   */
+  setInterior(hidden: boolean): void {
+    for (const p of this.parts) {
+      if (p.name === 'toit' || p.name === 'cabine') p.mesh.visible = !hidden;
+    }
+  }
+
+  /** Bout du canon, dans le monde : là d'où part l'obus. */
+  muzzle(out: Vector3): Vector3 {
+    const a = this.turretYaw;
+    return out.set(
+      this.position.x + Math.sin(a) * 3.2,
+      this.position.y + 1.42,
+      this.position.z + Math.cos(a) * 3.2,
+    );
   }
 
   private animate(planar: number): void {
@@ -934,6 +1152,18 @@ export class Mob {
         case 'prop':
           p.mesh.rotation.z = this.age * (6 + this.airspeed * 3.2);
           break;
+        case 'wheel':
+          p.mesh.rotation.x = -this.wheelTurn;
+          break;
+        case 'turret': {
+          // Pivot au centre de la tourelle, dans le repère du véhicule.
+          const a = wrapAngle(this.turretYaw - this.yaw);
+          const cz = 0.2;
+          const bx = p.base.x, bz = p.base.z - cz;
+          p.mesh.rotation.y = a;
+          p.mesh.position.set(bx * Math.cos(a) + bz * Math.sin(a), p.base.y, -bx * Math.sin(a) + bz * Math.cos(a) + cz);
+          continue;
+        }
         default:
           break;
       }
@@ -956,7 +1186,7 @@ export class Mob {
         );
         continue;
       }
-      if (p.anim && p.anim !== 'head' && p.anim !== 'none' && p.anim !== 'prop') {
+      if (p.anim && p.anim !== 'head' && p.anim !== 'none' && p.anim !== 'prop' && p.anim !== 'wheel') {
         // Pivot au sommet de la pièce plutôt qu'en son centre.
         const h = (p.mesh.geometry as BoxGeometry).parameters.height;
         const r = p.mesh.rotation.x;

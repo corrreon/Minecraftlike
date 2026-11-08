@@ -77,6 +77,7 @@ export class World {
   private lastKeyZ = NaN;
 
   private padPool: ArrayBuffer[] = [];
+  private lightPadPool: ArrayBuffer[] = [];
 
   constructor(seed: number) {
     this.seed = seed;
@@ -488,20 +489,20 @@ export class World {
 
   // --- Volume étendu pour le mailleur ------------------------------------
 
-  private takePad(): [Uint8Array, Uint8Array] {
-    const a = this.padPool.pop() ?? new ArrayBuffer(PADDED_VOLUME);
-    const b = this.padPool.pop() ?? new ArrayBuffer(PADDED_VOLUME);
-    return [new Uint8Array(a), new Uint8Array(b)];
+  private takePad(): [Uint16Array, Uint8Array] {
+    // Blocs sur 16 bits, lumière sur 8 : deux réserves de tampons distinctes.
+    const a = this.padPool.pop() ?? new ArrayBuffer(PADDED_VOLUME * 2);
+    const b = this.lightPadPool.pop() ?? new ArrayBuffer(PADDED_VOLUME);
+    return [new Uint16Array(a), new Uint8Array(b)];
   }
 
   recyclePad(a: ArrayBuffer, b: ArrayBuffer): void {
-    if (this.padPool.length < 12) {
-      this.padPool.push(a, b);
-    }
+    if (this.padPool.length < 6 && a.byteLength === PADDED_VOLUME * 2) this.padPool.push(a);
+    if (this.lightPadPool.length < 6 && b.byteLength === PADDED_VOLUME) this.lightPadPool.push(b);
   }
 
   /** Copie le chunk et la bordure de ses voisins dans deux volumes 18×128×18. */
-  buildPadded(c: Chunk): [Uint8Array, Uint8Array] {
+  buildPadded(c: Chunk): [Uint16Array, Uint8Array] {
     const [pb, pl] = this.takePad();
     pb.fill(0);
     pl.fill(0);
@@ -580,8 +581,8 @@ export class World {
 
   private applyOverflowEntry(c: Chunk, x: number, y: number, z: number, id: number): void {
     if (y < 0 || y >= WORLD_HEIGHT) return;
-    const force = (id & 0x100) !== 0;
-    const bid = id & 0xff;
+    const force = (id & 0x10000) !== 0;
+    const bid = id & 0xffff;
     const lx = mod(x, CHUNK_X);
     const lz = mod(z, CHUNK_Z);
     const i = voxelIndex(lx, y, lz);

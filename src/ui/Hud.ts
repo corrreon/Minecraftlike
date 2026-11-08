@@ -193,6 +193,14 @@ export class Hud {
     this.airspeedEl.textContent = `${speed.toFixed(0)} m/s${speed < stall ? '  ⚠ décrochage' : ''}`;
   }
 
+  /** Même cadran, texte libre : compteur de voiture, munitions restantes. */
+  setGauge(text: string | null, warn = false): void {
+    if (text === null) { this.airspeedEl.classList.remove('show'); return; }
+    this.airspeedEl.classList.add('show');
+    this.airspeedEl.classList.toggle('stall', warn);
+    if (this.airspeedEl.textContent !== text) this.airspeedEl.textContent = text;
+  }
+
   toast(message: string, kind: 'info' | 'warn' | 'error' = 'info', duration = 3200): void {
     const t = el('div', `toast ${kind === 'info' ? '' : kind}`.trim(), this.toastStack);
     t.textContent = message;
