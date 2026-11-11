@@ -2234,7 +2234,7 @@ export class Game {
       this.audio.mobAmbient('zombie');
       this.heldView.swing = 1;
       if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
-      this.hud.toast('Un zombie mutant surgit… 700 points de vie !', 'warn', 4000);
+      this.hud.toast('Un zombie mutant surgit… 100 points de vie !', 'warn', 4000);
       return;
     }
 

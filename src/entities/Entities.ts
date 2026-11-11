@@ -630,9 +630,9 @@ export const MOBS: Record<MobKind, MobDef> = {
     ],
     { rideable: true, aircraft: true, machine: true, seats: 8, flight: { max: 34, accel: 5, brake: 8, drag: 1.5, stall: 14 } }),
 
-  // Zombie mutant : un colosse de trois blocs, 700 points de vie. Il frappe
+  // Zombie mutant : un colosse de trois blocs, 100 points de vie. Il frappe
   // fort et projette loin ; une barre de vie s'affiche quand il est proche.
-  mutant_zombie: M('Zombie mutant', true, 700, 2.0, 1.5, 3.2, 14, 32, 150,
+  mutant_zombie: M('Zombie mutant', true, 100, 2.0, 1.5, 3.2, 14, 32, 150,
     [
       { key: 'rotten_flesh', min: 6, max: 12 },
       { key: 'iron_ingot', min: 2, max: 6 },

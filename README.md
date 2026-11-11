@@ -87,7 +87,7 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Passagers** : quand quelqu'un pilote, clic droit sur l'engin pour monter à
   bord comme passager (Airbus, hélicoptère, avion, Tesla, Porsche,
   Lamborghini). Accroupi pour descendre.
-- **Zombie mutant** : un colosse de trois blocs à **700 points de vie**, qui
+- **Zombie mutant** : un colosse de trois blocs à **100 points de vie**, qui
   frappe fort et projette loin. Il naît d'un **œuf d'apparition** (huit chairs
   putréfiées autour d'un diamant), et une barre de vie s'affiche à son approche.
 - **Visages** : les joueurs ont des yeux, une bouche et des cheveux.
