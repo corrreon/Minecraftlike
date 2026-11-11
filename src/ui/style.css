@@ -184,6 +184,22 @@ img {
 .airspeed.stall { color: #ff8f7f; }
 .airspeed.show { display: block; }
 
+/* Autres joueurs de la partie : pseudo, distance et direction. */
+.mp-players {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  padding: 4px 10px;
+  background: rgba(8, 10, 16, .65);
+  border-radius: 3px;
+  white-space: pre;
+  pointer-events: none;
+  display: none;
+}
+.mp-players.show { display: block; }
+
 .held-name.show {
   opacity: 1;
 }

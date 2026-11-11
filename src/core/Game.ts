@@ -171,9 +171,14 @@ export class Game {
   private remotes = new Map<number, RemoteAvatar>();
   private netPosTimer = 0;
   private lastSentPos = '';
+  /** Temps depuis le dernier envoi de position : on en renvoie une même à l'arrêt. */
+  private netPosAge = 0;
   private netRetries = 0;
   private netRetryTimer: number | null = null;
   private netError = '';
+  /** Invité tout juste arrivé : il sera posé à côté du premier joueur aperçu. */
+  private netJoinPending = false;
+  private netHudTimer = 0;
 
   /** Siège occupé (siège gamer), en coordonnées de bloc. */
   private seat: { x: number; y: number; z: number } | null = null;
@@ -1169,6 +1174,14 @@ export class Game {
         break;
       }
       case 'tp': {
+        // « /tp Léa » : rejoindre un ami de la partie.
+        if (parts.length === 1 && !Number.isFinite(Number(parts[0]))) {
+          const who = parts[0].toLowerCase();
+          const r = [...this.remotes.values()].find((p) => p.seen && p.name.toLowerCase().startsWith(who));
+          if (!r) { this.echo('Joueur introuvable dans la partie.'); break; }
+          this.teleportTo(r);
+          break;
+        }
         const [x, y, z] = parts.map(Number);
         if ([x, y, z].every((v) => Number.isFinite(v))) {
           this.player.position.set(x, y, z);
@@ -1467,7 +1480,7 @@ export class Game {
     if (active) { this.updateMount(dt); this.updateSeat(); }
     this.updateTracers(dt);
     this.updateGauge();
-    this.updateNet(dt, active);
+    this.updateNet(dt);
     this.updateBlockEntities(dt);
     if (this.settings.particles) this.particles.update(dt, this.skyState.dayFactor);
 
@@ -2606,7 +2619,13 @@ export class Game {
       },
       onBlocks: (edits) => this.applyRemoteEdits(edits),
       onReady: () => { if (role === 'guest') this.hud.toast('Monde synchronisé avec la partie.'); },
-      onJoin: (id, name) => { this.addRemote(id, name); this.hud.toast(`${name} a rejoint la partie.`); },
+      onJoin: (id, name) => {
+        this.addRemote(id, name);
+        this.hud.toast(`${name} a rejoint la partie.`);
+        // Le nouveau venu doit nous voir tout de suite, même si on ne bouge pas.
+        this.lastSentPos = '';
+        this.netPosTimer = 0;
+      },
       onLeave: (id) => {
         const r = this.remotes.get(id);
         if (r) { this.hud.toast(`${r.name} a quitté la partie.`); this.removeRemote(id); }
@@ -2617,6 +2636,12 @@ export class Game {
         r.yaw = yaw;
         r.dimension = d;
         if (!r.seen) { r.group.position.copy(r.target); r.seen = true; }
+        // Première fois qu'on aperçoit quelqu'un : l'invité arrive à ses côtés,
+        // au lieu de chercher l'hôte à des centaines de blocs.
+        if (this.netJoinPending && d === this.dimension && this.worldReady) {
+          this.netJoinPending = false;
+          this.teleportTo(r);
+        }
       },
       onChat: (name, text) => { this.hud.toast(`💬 ${name} : ${text}`, 'info', 6000); this.echo(`<${name}> ${text}`); },
       onError: (message, fatal) => {
@@ -2638,6 +2663,7 @@ export class Game {
     if (session !== this.net) return;
     this.netWelcomed = true;
     this.netRetries = 0;
+    this.lastSentPos = '';
     for (const p of w.players) {
       const r = this.addRemote(p.id, p.name);
       r.target.set(p.x, p.y, p.z);
@@ -2682,6 +2708,7 @@ export class Game {
     await this.startWorld(meta, true);
     if (this.net !== net) return;
     this.netWorldReady = true;
+    this.netJoinPending = true;
     const queued = this.netQueue;
     this.netQueue = [];
     this.applyRemoteEdits(queued);
@@ -2797,18 +2824,52 @@ export class Game {
     this.remotes.delete(id);
   }
 
+  private teleportTo(r: RemoteAvatar): void {
+    if (r.dimension !== this.dimension) { this.hud.toast(`${r.name} est dans une autre dimension.`, 'warn'); return; }
+    if (this.mount) this.dismount();
+    this.player.position.set(r.target.x + 1, r.target.y + 0.2, r.target.z);
+    this.player.velocity.set(0, 0, 0);
+    this.hud.toast(`Te voilà à côté de ${r.name} !`);
+  }
+
+  /** Bandeau des autres joueurs : pseudo, distance, et flèche vers eux. */
+  private updatePlayersHud(dt: number): void {
+    this.netHudTimer -= dt;
+    if (this.netHudTimer > 0) return;
+    this.netHudTimer = 0.25;
+    if (!this.net) { this.hud.setPlayers(null); return; }
+    if (!this.netWelcomed) { this.hud.setPlayers('👥 Connexion à la partie…'); return; }
+    const lines = ['👥 Partie en ligne'];
+    if (this.remotes.size === 0) lines.push('Personne d’autre pour l’instant');
+    const arrows = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+    for (const r of this.remotes.values()) {
+      if (!r.seen) { lines.push(`${r.name} · …`); continue; }
+      if (r.dimension !== this.dimension) { lines.push(`${r.name} · autre dimension`); continue; }
+      const dx = r.target.x - this.player.position.x, dz = r.target.z - this.player.position.z;
+      const dist = Math.round(Math.hypot(dx, dz));
+      // Direction relative au regard : 0 = devant soi.
+      const ang = Math.atan2(-dx, -dz) - this.player.yaw;
+      const k = ((Math.round(-ang / (Math.PI / 4)) % 8) + 8) % 8;
+      lines.push(`${r.name} · ${dist} m ${dist > 2 ? arrows[k] : ''}`);
+    }
+    this.hud.setPlayers(lines.join('\n'));
+  }
+
   /** Envoie sa position, et fait glisser les avatars des autres vers la leur. */
-  private updateNet(dt: number, active: boolean): void {
+  private updateNet(dt: number): void {
+    this.updatePlayersHud(dt);
     const net = this.net;
     if (net && this.netWelcomed) {
       net.flush();
       this.netPosTimer -= dt;
-      if (this.netPosTimer <= 0 && active && this.worldReady) {
+      if (this.netPosTimer <= 0 && this.worldReady) {
         this.netPosTimer = 0.1;
         const p = this.player.position;
         const key = `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${this.player.yaw.toFixed(2)},${this.dimension}`;
-        if (key !== this.lastSentPos) {
+        this.netPosAge += 0.1;
+        if (key !== this.lastSentPos || this.netPosAge >= 2) {
           this.lastSentPos = key;
+          this.netPosAge = 0;
           net.sendPos(p.x, p.y, p.z, this.player.yaw, this.player.pitch, this.dimension);
         }
       }

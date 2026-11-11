@@ -49,6 +49,7 @@ export class Hud {
   private breathEl: HTMLElement;
   private heldName: HTMLElement;
   private airspeedEl: HTMLElement;
+  private playersEl: HTMLElement;
   private debugEl: HTMLElement;
   private toastStack: HTMLElement;
   private vignette: HTMLElement;
@@ -71,6 +72,7 @@ export class Hud {
     this.breathEl = document.getElementById('breath')!;
     this.heldName = document.getElementById('held-item-name')!;
     this.airspeedEl = document.getElementById('airspeed')!;
+    this.playersEl = document.getElementById('mp-players')!;
     this.debugEl = document.getElementById('debug')!;
     this.toastStack = document.getElementById('toast-stack')!;
     this.vignette = document.getElementById('hit-vignette')!;
@@ -191,6 +193,12 @@ export class Hud {
     this.airspeedEl.classList.add('show');
     this.airspeedEl.classList.toggle('stall', speed < stall);
     this.airspeedEl.textContent = `${speed.toFixed(0)} m/s${speed < stall ? '  ⚠ décrochage' : ''}`;
+  }
+
+  /** Liste des joueurs de la partie (`null` : pas de partie en cours). */
+  setPlayers(text: string | null): void {
+    this.playersEl.classList.toggle('show', text !== null);
+    if (text !== null && this.playersEl.textContent !== text) this.playersEl.textContent = text;
   }
 
   /** Même cadran, texte libre : compteur de voiture, munitions restantes. */
