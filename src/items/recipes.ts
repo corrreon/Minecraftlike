@@ -241,6 +241,12 @@ RECIPES.push(shaped(['GLG', 'III', 'C C'], { G: 'glass', L: 'lime_wool', I: 'iro
 RECIPES.push(shaped(['GWG', 'IRI', 'C C'], { G: 'glass', W: 'white_wool', I: 'iron_ingot', R: 'redstone_block', C: 'coal_block' }, 'tesla'));
 RECIPES.push(shaped(['GRG', 'III', 'C C'], { G: 'glass', R: 'red_wool', I: 'iron_ingot', C: 'coal_block' }, 'porsche'));
 
+// --- Aéronefs et œuf d'apparition -----------------------------------------------
+RECIPES.push(shaped([' I ', 'IRI', 'BIB'], { I: 'iron_block', R: 'redstone_block', B: 'rocket' }, 'fighter_jet'));
+RECIPES.push(shaped(['III', ' G ', 'IYI'], { I: 'iron_ingot', G: 'glass', Y: 'yellow_wool' }, 'helicopter'));
+RECIPES.push(shaped(['GGG', 'IBI', 'III'], { G: 'glass', I: 'iron_block', B: 'blue_wool' }, 'airbus'));
+RECIPES.push(shaped(['RRR', 'RDR', 'RRR'], { R: 'rotten_flesh', D: 'diamond' }, 'mutant_zombie_spawn_egg'));
+
 // --- Seaux -----------------------------------------------------------------
 RECIPES.push(shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket'));
 

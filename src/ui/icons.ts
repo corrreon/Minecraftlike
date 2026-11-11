@@ -247,6 +247,37 @@ function gearIcon(def: ItemDef): string {
       rect(put, 5, 2, 6, 3, c);
       rect(put, 6, 1, 4, 1, c, 0.8);
       break;
+    case 'fighter_jet':
+      rect(put, 7, 1, 2, 13, c, 1.1);
+      rect(put, 2, 7, 12, 2, c);
+      rect(put, 4, 6, 8, 1, c, 0.9);
+      rect(put, 5, 12, 6, 2, c, 0.85);
+      rect(put, 7, 3, 2, 3, 0x2a4a6a);
+      rect(put, 7, 14, 2, 1, 0xffa040);
+      break;
+    case 'helicopter':
+      rect(put, 1, 3, 14, 1, 0x2a2a2e);
+      rect(put, 7, 4, 2, 2, 0x3a3a40);
+      rect(put, 3, 6, 7, 5, c);
+      rect(put, 3, 7, 3, 3, 0x2a4a6a);
+      rect(put, 10, 7, 5, 2, c, 0.85);
+      rect(put, 14, 5, 1, 4, 0x3a3a40);
+      rect(put, 2, 12, 9, 1, 0x3a3a40);
+      break;
+    case 'airbus':
+      rect(put, 1, 6, 14, 4, c);
+      rect(put, 0, 7, 1, 2, c, 0.9);
+      rect(put, 2, 7, 12, 1, 0x1a3a8a);
+      rect(put, 6, 10, 4, 4, c, 0.85);
+      rect(put, 13, 2, 2, 4, 0x1a3a8a);
+      for (const x of [3, 5, 7, 9, 11]) rect(put, x, 6, 1, 1, 0x2a3a4a);
+      break;
+    case 'mutant_zombie_spawn_egg':
+      rect(put, 6, 2, 4, 2, c, 1.1);
+      rect(put, 4, 4, 8, 8, c);
+      rect(put, 5, 12, 6, 2, c, 0.85);
+      for (const [x, y] of [[5, 5], [9, 6], [6, 9], [10, 10], [7, 3]] as const) rect(put, x, y, 2, 1, 0x1b2a14);
+      break;
     case 'tank':
       rect(put, 1, 9, 14, 4, 0x2a2a26);
       rect(put, 2, 7, 12, 3, c);

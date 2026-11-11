@@ -40,7 +40,7 @@ import {
 import { Input } from './Input';
 import { isTouchDevice, loadSettings, saveSettings, type Settings } from './Settings';
 import { AudioEngine, type SoundGroup } from '../audio/Audio';
-import { Mob, ItemEntity, MOBS, coloredBox, findSpawnSpot, findWaterSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
+import { Mob, ItemEntity, MOBS, PLANE_FLIGHT, coloredBox, findSpawnSpot, findWaterSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
 import { Container, HOTBAR_SIZE, makeStack, type ItemStack } from '../items/Inventory';
 import { Inventory } from '../items/Inventory';
 import { ITEMS, ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, VEHICLE_ITEMS, blockDrops, breakInfo, type GunStats, type ItemDef } from '../items/items';
@@ -95,7 +95,14 @@ function newUid(): string {
 
 const MOB_TICK = 1.8;
 /** Vitesse de décrochage d'un avion, dupliquée ici pour l'affichage. */
-const PLANE_STALL_SPEED = 9;
+/**
+ * Place du pilote dans chaque aéronef : distance vers l'avant depuis le centre,
+ * et hauteur des yeux au-dessus du plancher. Dans l'Airbus, on est au poste de
+ * pilotage, tout à l'avant.
+ */
+const AIR_SEAT: Record<string, [number, number]> = {
+  fighter_jet: [1.3, 1.55], helicopter: [1.0, 1.5], airbus: [7.4, 2.8],
+};
 /** Sensibilité du manche de pilotage, en radians par seconde à fond de course. */
 const PLANE_STICK = 1.1;
 /** Hauteur des yeux du pilote au-dessus du plancher de chaque véhicule. */
@@ -194,6 +201,10 @@ export class Game {
   /** Invité tout juste arrivé : il sera posé à côté du premier joueur aperçu. */
   private netJoinPending = false;
   private netHudTimer = 0;
+
+  /** Engin dans lequel on voyage comme passager (quelqu'un d'autre pilote). */
+  private passengerOf: Mob | null = null;
+  private passengerSeat = 0;
 
   /** Siège occupé (siège gamer), en coordonnées de bloc. */
   private seat: { x: number; y: number; z: number } | null = null;
@@ -801,6 +812,7 @@ export class Game {
     if (this.pool) this.pool.dispose();
     if (this.particles) this.scene.remove(this.particles.mesh);
     this.mount = null;
+    this.passengerOf = null;
     this.player.riding = false;
     for (const m of this.mobs) { this.entityGroup.remove(m.group); m.dispose(); }
     for (const d of this.drops) { this.entityGroup.remove(d.object); d.dispose(); }
@@ -1500,7 +1512,7 @@ export class Game {
     // Entités. La monture est replacée après elles : le cavalier suit sa
     // créature, jamais l'inverse.
     this.updateEntities(dt, active);
-    if (active) { this.updateMount(dt); this.updateSeat(); }
+    if (active) { this.updateMount(dt); this.updateSeat(); this.updatePassenger(dt); }
     this.updateTracers(dt);
     this.updateGauge();
     this.updateNet(dt);
@@ -2121,7 +2133,13 @@ export class Game {
       const eye = this.player.eyePosition.clone();
       const dir = this.player.forward.clone().normalize();
       const aimed = this.pickMob(eye, dir, REACH_SURVIVAL);
-      if (aimed?.def.rideable) {
+      // Quelqu'un pilote déjà, et il reste de la place : on monte en passager.
+      if (aimed?.def.rideable && aimed.ridden && (aimed.def.seats ?? 1) > 1 && !this.passengerOf) {
+        this.useLocked = true;
+        this.boardAsPassenger(aimed);
+        return;
+      }
+      if (aimed?.def.rideable && !this.passengerOf) {
         this.useLocked = true;
         if (aimed.puppet) this.claimMob(aimed, 'mount');
         else this.mountMob(aimed);
@@ -2207,6 +2225,17 @@ export class Game {
         this.heldView.swing = 1;
         return;
       }
+    }
+
+    // Œuf d'apparition : la créature naît là où l'on vise.
+    if (item.key === 'mutant_zombie_spawn_egg' && hit) {
+      this.useLocked = true;
+      this.addMob('mutant_zombie', hit.x + hit.nx + 0.5, hit.y + hit.ny, hit.z + hit.nz + 0.5);
+      this.audio.mobAmbient('zombie');
+      this.heldView.swing = 1;
+      if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+      this.hud.toast('Un zombie mutant surgit… 700 points de vie !', 'warn', 4000);
+      return;
     }
 
     // Avion, voitures et tank ne sont pas des blocs : l'engin apparaît devant
@@ -2324,6 +2353,12 @@ export class Game {
       this.hud.toast(m.def.vehicle.cannon
         ? 'Z/Q/S/D pour rouler, clic gauche pour tirer un obus. Accroupis-toi à l’arrêt pour descendre.'
         : 'Z/Q/S/D pour rouler, saut pour klaxonner. Accroupis-toi à l’arrêt pour descendre.');
+    } else if (m.def.flight?.heli) {
+      this.hud.toast('Z/Q/S/D pour te déplacer, regard pour tourner, saut pour monter, accroupi pour descendre et te poser.', 'info', 6000);
+    } else if (m.def.flight?.missiles) {
+      this.hud.toast('Espace : plein gaz · regard : direction · clic gauche : missiles (roquettes).', 'info', 6000);
+    } else if (m.def.aircraft) {
+      this.hud.toast('Espace : gaz · Maj : frein · on vole là où l’on regarde.', 'info', 5000);
     } else {
       this.hud.toast('En selle. Accroupis-toi pour descendre.');
     }
@@ -2343,6 +2378,7 @@ export class Game {
     m.driveBrake = false;
     m.setInterior(false);
     this.mount = null;
+    this.passengerOf = null;
     this.player.riding = false;
     // On descend sur le côté, jamais dans la monture.
     this.player.position.set(m.position.x + m.def.width + 0.2, m.position.y + 0.4, m.position.z);
@@ -2364,24 +2400,37 @@ export class Game {
     // seules la poussée et le frein restent au clavier. On n'en descend qu'une
     // fois posé — sauter en marche n'est pas une commande, c'est un accident.
     if (m.def.aircraft) {
-      // Au tactile, le pouce droit reste sur les gaz : il ne peut plus balayer
-      // l'écran pour viser. Le manche gauche, inutile en vol, devient donc la
-      // commande de pilotage — pousser en haut lève le nez.
-      if (st.moveX !== 0 || st.moveY !== 0) {
-        this.player.applyLook(st.moveX * PLANE_STICK * dt, st.moveY * PLANE_STICK * dt);
+      const F = m.def.flight ?? PLANE_FLIGHT;
+      if (F.heli) {
+        // Hélicoptère : le joystick (ou Z/Q/S/D) le déplace, le regard
+        // l'oriente, saut et accroupi le font monter et descendre. Posé,
+        // rester accroupi fait descendre de l'appareil.
+        const ix = (st.right ? 1 : 0) - (st.left ? 1 : 0) + st.moveX;
+        const iz = (st.back ? 1 : 0) - (st.forward ? 1 : 0) + st.moveY;
+        m.driveX = clamp(ix, -1, 1);
+        m.driveZ = clamp(-iz, -1, 1);
+        m.driveYaw = this.player.yaw;
+        m.driveJump = st.jump;
+        m.driveBrake = st.sneak;
+        if (st.sneak && m.onGround) { this.dismount(); return; }
+        this.hud.setGauge(`Hélicoptère · ${Math.round(m.airspeed * 3.6)} km/h · altitude ${Math.round(m.position.y)}`, false);
+      } else {
+        // Au tactile, le pouce droit reste sur les gaz : il ne peut plus balayer
+        // l'écran pour viser. Le manche gauche, inutile en vol, devient donc la
+        // commande de pilotage — pousser en haut lève le nez.
+        if (st.moveX !== 0 || st.moveY !== 0) {
+          this.player.applyLook(st.moveX * PLANE_STICK * dt, st.moveY * PLANE_STICK * dt);
+        }
+        m.driveYaw = this.player.yaw;
+        m.drivePitch = this.player.pitch;
+        m.driveJump = st.jump;
+        m.driveBrake = st.sneak;
+        if (st.sneak && m.onGround && m.airspeed < 1) { this.dismount(); return; }
+        this.hud.setAirspeed(m.airspeed, F.stall);
       }
-      m.driveYaw = this.player.yaw;
-      m.drivePitch = this.player.pitch;
-      m.driveJump = st.jump;
-      m.driveBrake = st.sneak;
-      if (st.sneak && m.onGround && m.airspeed < 1) { this.dismount(); return; }
-      const seat = m.position.y + m.def.height * 0.62;
-      this.player.position.x = m.position.x;
-      this.player.position.z = m.position.z;
-      this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
+      this.seatOnAircraft(m, dt);
       this.player.velocity.set(0, 0, 0);
       this.player.onGround = m.onGround;
-      this.hud.setAirspeed(m.airspeed, PLANE_STALL_SPEED);
       return;
     }
 
@@ -2410,6 +2459,28 @@ export class Game {
     this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
     this.player.velocity.set(0, 0, 0);
     this.player.onGround = m.onGround;
+  }
+
+  /** Assoit le joueur à la place du pilote (ou à sa place de passager). */
+  private seatOnAircraft(m: Mob, dt: number, back = 0): void {
+    const seatDef = AIR_SEAT[m.kind];
+    if (!seatDef && back === 0) {
+      const seat = m.position.y + m.def.height * 0.62;
+      this.player.position.x = m.position.x;
+      this.player.position.z = m.position.z;
+      this.player.position.y += (seat - this.player.position.y) * Math.min(1, 18 * dt);
+      return;
+    }
+    const [fwd0, eye] = seatDef ?? [0, m.def.height * 0.62 + this.player.eyeHeight];
+    const fwd = fwd0 - back;
+    const { yaw, pitch } = m.attitude();
+    const cp = Math.cos(pitch);
+    const x = m.position.x - Math.sin(yaw) * cp * fwd;
+    const z = m.position.z - Math.cos(yaw) * cp * fwd;
+    const y = m.position.y + eye - this.player.eyeHeight - Math.sin(pitch) * fwd;
+    this.player.position.x = x;
+    this.player.position.z = z;
+    this.player.position.y += (y - this.player.position.y) * Math.min(1, 18 * dt);
   }
 
   /**
@@ -2508,7 +2579,7 @@ export class Game {
     }
     const impact = origin.clone().addScaledVector(dir, target ? bestT : maxT);
     this.addTracer(muzzle, impact);
-    this.audio.gunshot(fromCannon ? 'cannon' : gun.sound);
+    this.audio.gunshot(fromCannon && !this.mount?.def.aircraft ? 'cannon' : gun.sound);
     this.heldView.swing = 0.6;
 
     if (gun.blast > 0) {
@@ -2555,10 +2626,12 @@ export class Game {
     const st = this.input.state;
     if (!st.attack) { this.triggerLocked = false; return false; }
 
-    const tank = this.mount?.def.vehicle?.cannon ? this.mount : null;
-    const gun = tank
-      ? { cooldown: CANNON_COOLDOWN, damage: 20, range: 90, ammo: 'tank_shell', auto: false, blast: 3, spread: 0, sound: 'rocket' as const }
-      : this.inventory.selectedStack?.item.gun;
+    const tank = this.mount?.def.vehicle?.cannon || this.mount?.def.flight?.missiles ? this.mount : null;
+    const gun = tank?.def.flight?.missiles
+      ? { cooldown: 0.7, damage: 16, range: 110, ammo: 'rocket', auto: false, blast: 2.6, spread: 0, sound: 'rocket' as const }
+      : tank
+        ? { cooldown: CANNON_COOLDOWN, damage: 20, range: 90, ammo: 'tank_shell', auto: false, blast: 3, spread: 0, sound: 'rocket' as const }
+        : this.inventory.selectedStack?.item.gun;
     if (!gun) return false;
     if (this.player.mode === GameMode.Spectator) return true;
     if (this.gunCooldown > 0 || (!gun.auto && this.triggerLocked)) return true;
@@ -3179,6 +3252,49 @@ export class Game {
     return false;
   }
 
+  private boardAsPassenger(m: Mob): void {
+    if (this.mount || this.seat) return;
+    this.passengerOf = m;
+    // Une place au hasard : deux passagers ne s'assoient pas l'un dans l'autre.
+    this.passengerSeat = 1 + Math.floor(Math.random() * ((m.def.seats ?? 2) - 1));
+    this.player.riding = true;
+    this.player.velocity.set(0, 0, 0);
+    this.hud.toast(`Tu es passager du ${m.def.name}. Accroupis-toi pour descendre.`, 'info', 4000);
+    this.audio.click();
+  }
+
+  /** Le passager suit l'engin, assis à sa place ; accroupi, il descend. */
+  private updatePassenger(dt: number): void {
+    const m = this.passengerOf;
+    if (!m) return;
+    if (m.dead || this.player.dead || this.input.state.sneak) {
+      this.passengerOf = null;
+      if (!this.mount && !this.seat) this.player.riding = false;
+      this.player.position.set(m.position.x + m.def.width * 0.5 + 0.8, m.position.y + 0.3, m.position.z);
+      this.player.velocity.set(0, 0, 0);
+      return;
+    }
+    const i = this.passengerSeat;
+    if (m.def.aircraft) {
+      // En cabine : rang après rang derrière le poste de pilotage.
+      const back = m.kind === 'airbus' ? 1.6 + i * 1.4 : 1.0;
+      this.seatOnAircraft(m, dt, back);
+    } else {
+      // Voiture, tank : à côté ou derrière le conducteur.
+      const fx = Math.sin(m.yaw), fz = Math.cos(m.yaw);
+      const rx = -fz, rz = fx;
+      const side = i % 2 === 1 ? 0.45 : -0.45;
+      const behind = i >= 2 ? 0.9 : 0;
+      const eye = VEHICLE_EYE[m.kind] ?? 1;
+      this.player.position.x = m.position.x + rx * side - fx * behind;
+      this.player.position.z = m.position.z + rz * side - fz * behind;
+      const y = m.position.y + eye - this.player.eyeHeight;
+      this.player.position.y += (y - this.player.position.y) * Math.min(1, 18 * dt);
+    }
+    this.player.velocity.set(0, 0, 0);
+    this.player.onGround = true;
+  }
+
   /** S'asseoir dans un siège : on n'en bouge plus jusqu'à s'accroupir. */
   private sitOn(x: number, y: number, z: number): void {
     if (this.mount) return;
@@ -3718,6 +3834,7 @@ export class Game {
     if (this.pool) this.pool.dispose();
     if (this.particles) this.scene.remove(this.particles.mesh);
     this.mount = null;
+    this.passengerOf = null;
     this.player.riding = false;
     for (const m of this.mobs) { this.entityGroup.remove(m.group); m.dispose(); }
     for (const d of this.drops) { this.entityGroup.remove(d.object); d.dispose(); }
@@ -4089,7 +4206,19 @@ export class Game {
    * fois par monde. Tant qu'un cristal tient sur sa colonne, il se régénère.
    */
   private updateDragonFight(dt: number): void {
-    if (this.dimension !== 'end') { this.dragon = null; return; }
+    if (this.dimension !== 'end') {
+      this.dragon = null;
+      // Hors de l'End, la barre de vie suit le zombie mutant le plus proche.
+      let best: Mob | null = null;
+      let bd = 40;
+      for (const m of this.mobs) {
+        if (m.kind !== 'mutant_zombie' || m.dead) continue;
+        const d = m.position.distanceTo(this.player.position);
+        if (d < bd) { bd = d; best = m; }
+      }
+      this.hud.setBoss(best ? { name: best.def.name, ratio: Math.max(0, best.health / best.def.health), note: `${Math.ceil(best.health)} / ${best.def.health} PV` } : null);
+      return;
+    }
 
     // En partie, le dragon d'un autre joueur est déjà là : on suit le sien.
     if (!this.dragon) {
@@ -4685,7 +4814,8 @@ export class Game {
       }
       this.playerModel.visible = true;
       this.playerModel.position.copy(p.position);
-      this.playerModel.rotation.y = p.yaw + Math.PI;
+      // Le modèle regarde vers -Z, comme la caméra : son visage suit le regard.
+      this.playerModel.rotation.y = p.yaw;
       const swing = Math.sin(p.bobPhase * 4) * Math.min(0.7, Math.hypot(p.velocity.x, p.velocity.z) * 0.16);
       const [armL, armR, legL, legR] = this.playerLimbs;
       armL.rotation.x = swing;
@@ -4721,6 +4851,15 @@ export class Game {
       return pivot;
     };
     add(0.5, 0.5, 0.5, 0xe0ac86, 0, 1.62, 0);
+    // Visage, tourné vers -Z comme le regard : cheveux, yeux, sourire.
+    add(0.54, 0.14, 0.54, 0x5a3a20, 0, 1.9, 0.02);
+    add(0.54, 0.34, 0.1, 0x5a3a20, 0, 1.72, 0.25);
+    add(0.12, 0.1, 0.04, 0xffffff, -0.11, 1.66, -0.26);
+    add(0.12, 0.1, 0.04, 0xffffff, 0.11, 1.66, -0.26);
+    add(0.06, 0.08, 0.04, 0x2a4a9a, -0.09, 1.66, -0.275);
+    add(0.06, 0.08, 0.04, 0x2a4a9a, 0.13, 1.66, -0.275);
+    add(0.08, 0.06, 0.04, 0xc88a6a, 0, 1.58, -0.27);
+    add(0.2, 0.04, 0.04, 0x9a3a3a, 0, 1.49, -0.265);
     add(0.52, 0.74, 0.28, shirt, 0, 1.0, 0);
     const armL = add(0.22, 0.72, 0.22, 0xe0ac86, -0.37, 1.38, 0, true);
     const armR = add(0.22, 0.72, 0.22, 0xe0ac86, 0.37, 1.38, 0, true);

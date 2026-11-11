@@ -79,6 +79,18 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   compteur affiche la vitesse en km/h ; `Espace` klaxonne, `Maj` freine puis,
   à l'arrêt, fait descendre. La **tourelle du tank suit le regard**, et le clic
   gauche tire un **obus** qui explose à l'impact.
+- **Aéronefs** : un **avion de chasse** (le plus rapide, clic gauche pour tirer
+  des missiles — il faut des roquettes), un **hélicoptère** qui tient en l'air
+  tout seul (Z/Q/S/D pour se déplacer, le regard pour tourner, saut pour
+  monter, accroupi pour descendre et se poser) et un **Airbus**, lent mais
+  majestueux, avec huit places.
+- **Passagers** : quand quelqu'un pilote, clic droit sur l'engin pour monter à
+  bord comme passager (Airbus, hélicoptère, avion, Tesla, Porsche,
+  Lamborghini). Accroupi pour descendre.
+- **Zombie mutant** : un colosse de trois blocs à **700 points de vie**, qui
+  frappe fort et projette loin. Il naît d'un **œuf d'apparition** (huit chairs
+  putréfiées autour d'un diamant), et une barre de vie s'affiche à son approche.
+- **Visages** : les joueurs ont des yeux, une bouche et des cheveux.
 - **Armes à feu** : **pistolet** (coup par coup), **mitraillette** (tir
   automatique tant qu'on tient le bouton) et **lance-roquettes** (explosion à
   l'impact). Le clic gauche tire au lieu de frapper, chaque tir consomme une

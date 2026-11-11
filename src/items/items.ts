@@ -414,8 +414,15 @@ item('lamborghini', { name: 'Lamborghini', maxStack: 1, color: 0x9ad81e, icon: '
 item('tesla', { name: 'Tesla', maxStack: 1, color: 0xe8e8ec, icon: 'vehicle' });
 item('porsche', { name: 'Porsche', maxStack: 1, color: 0xc8202a, icon: 'vehicle' });
 
+// Aéronefs : avion de chasse, hélicoptère, Airbus.
+item('fighter_jet', { name: 'Avion de chasse', maxStack: 1, color: 0x7d8790, icon: 'vehicle' });
+item('helicopter', { name: 'Hélicoptère', maxStack: 1, color: 0xd8a020, icon: 'vehicle' });
+item('airbus', { name: 'Airbus', maxStack: 1, color: 0xf2f2f4, icon: 'vehicle' });
+// Œuf d'apparition : il fait naître la créature là où l'on vise.
+item('mutant_zombie_spawn_egg', { name: 'Œuf d’apparition de zombie mutant', maxStack: 16, color: 0x3e6e30, icon: 'ammo' });
+
 /** Objets qui font apparaître un engin piloté. */
-export const VEHICLE_ITEMS = new Set(['plane', 'tank', 'lamborghini', 'tesla', 'porsche']);
+export const VEHICLE_ITEMS = new Set(['plane', 'tank', 'lamborghini', 'tesla', 'porsche', 'fighter_jet', 'helicopter', 'airbus']);
 
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];

@@ -31,7 +31,8 @@ export type MobKind =
   | 'zombie' | 'skeleton' | 'creeper' | 'spider'
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
   | 'blaze' | 'enderman' | 'ender_dragon' | 'piglin'
-  | 'plane' | 'tank' | 'lamborghini' | 'tesla' | 'porsche';
+  | 'plane' | 'tank' | 'lamborghini' | 'tesla' | 'porsche'
+  | 'fighter_jet' | 'helicopter' | 'airbus' | 'mutant_zombie';
 
 interface MobPart {
   name: string;
@@ -39,7 +40,7 @@ interface MobPart {
   offset: [number, number, number];
   color: number;
   /** Type d'animation appliqué à la pièce. */
-  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'prop' | 'wheel' | 'turret' | 'none';
+  anim?: 'legFL' | 'legFR' | 'legBL' | 'legBR' | 'head' | 'armL' | 'armR' | 'wingL' | 'wingR' | 'tail' | 'prop' | 'wheel' | 'turret' | 'rotor' | 'tailrotor' | 'none';
 }
 
 interface MobTraits {
@@ -68,6 +69,10 @@ interface MobTraits {
   aircraft?: boolean;
   /** Véhicule terrestre piloté : voiture ou tank. */
   vehicle?: VehicleSpec;
+  /** Caractéristiques de vol d'un aéronef (par défaut : le petit avion). */
+  flight?: FlightSpec;
+  /** Nombre de places : le pilote, plus des passagers. */
+  seats?: number;
   /** Engin (avion, voiture, tank) : ni IA, ni errance, ni disparition au loin. */
   machine?: boolean;
   /**
@@ -75,6 +80,21 @@ interface MobTraits {
    * `[rayon, altitude]` de l'orbite.
    */
   orbit?: [number, number];
+}
+
+export interface FlightSpec {
+  /** Vitesse maximale, en blocs par seconde. */
+  max: number;
+  /** Poussée, freinage et traînée, en blocs par seconde carrée. */
+  accel: number;
+  brake: number;
+  drag: number;
+  /** En dessous de cette vitesse, la portance s'efface et l'appareil décroche. */
+  stall: number;
+  /** Hélicoptère : il tient en l'air sans vitesse, et monte ou descend à volonté. */
+  heli?: boolean;
+  /** Avion de chasse : le clic gauche tire des missiles. */
+  missiles?: boolean;
 }
 
 export interface VehicleSpec {
@@ -469,7 +489,7 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'roueR', size: [0.28, 0.28, 0.16], offset: [0.5, 0.18, -0.6], color: 0x1c1c20 },
       { name: 'roulette', size: [0.2, 0.2, 0.12], offset: [0, 0.16, 1.35], color: 0x1c1c20 },
     ],
-    { rideable: true, aircraft: true, machine: true }),
+    { rideable: true, aircraft: true, machine: true, seats: 2 }),
 
   // --- Véhicules ------------------------------------------------------------
   // Tous regardent vers -Z, comme les créatures. Les roues tournent avec la
@@ -509,7 +529,7 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'feuR', size: [0.5, 0.08, 0.05], offset: [0.6, 0.6, 1.91], color: 0xe01010 },
       ...wheels(0.85, 1.25, 0xc8c8d0),
     ],
-    { rideable: true, machine: true, vehicle: { max: 30, reverse: 7, accel: 13, brake: 26, drag: 3, turn: 2.0, seat: 0.2 } }),
+    { rideable: true, machine: true, vehicle: { max: 30, reverse: 7, accel: 13, brake: 26, drag: 3, turn: 2.0, seat: 0.2 }, seats: 2 }),
 
   tesla: M('Tesla', false, 60, 0, 2.0, 1.45, 0, 0, 0, [],
     [
@@ -524,7 +544,7 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'feux', size: [1.6, 0.06, 0.05], offset: [0, 0.72, 2.11], color: 0xd01010 },
       ...wheels(0.85, 1.4, 0x3a3a40),
     ],
-    { rideable: true, machine: true, vehicle: { max: 26, reverse: 7, accel: 18, brake: 26, drag: 3, turn: 2.0, seat: 0.35 } }),
+    { rideable: true, machine: true, vehicle: { max: 26, reverse: 7, accel: 18, brake: 26, drag: 3, turn: 2.0, seat: 0.35 }, seats: 5 }),
 
   porsche: M('Porsche', false, 60, 0, 2.0, 1.25, 0, 0, 0, [],
     [
@@ -539,21 +559,109 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'feux', size: [1.6, 0.07, 0.05], offset: [0, 0.68, 2.01], color: 0xd01010 },
       ...wheels(0.8, 1.3, 0xd8d8e0),
     ],
-    { rideable: true, machine: true, vehicle: { max: 28, reverse: 7, accel: 14, brake: 28, drag: 3, turn: 2.3, seat: 0.25 } }),
+    { rideable: true, machine: true, vehicle: { max: 28, reverse: 7, accel: 14, brake: 28, drag: 3, turn: 2.3, seat: 0.25 }, seats: 4 }),
+
+  // --- Aéronefs -----------------------------------------------------------------
+  // Comme le petit avion : le nez vers -Z, et pas de demi-tour au rendu.
+  fighter_jet: M('Avion de chasse', false, 60, 0, 1.6, 1.6, 0, 0, 0, [],
+    [
+      { name: 'fuselage', size: [0.9, 0.7, 4.6], offset: [0, 1.0, 0], color: 0x7d8790 },
+      { name: 'nez', size: [0.6, 0.5, 1.1], offset: [0, 0.98, -2.8], color: 0x6a737c },
+      { name: 'pointe', size: [0.3, 0.3, 0.5], offset: [0, 0.96, -3.55], color: 0x3a3f44 },
+      { name: 'verriere', size: [0.6, 0.38, 1.2], offset: [0, 1.48, -1.3], color: 0x2a4a6a },
+      { name: 'aileL', size: [2.6, 0.1, 1.8], offset: [-1.7, 0.95, 0.5], color: 0x737d86 },
+      { name: 'aileR', size: [2.6, 0.1, 1.8], offset: [1.7, 0.95, 0.5], color: 0x737d86 },
+      { name: 'missileL', size: [0.16, 0.16, 1.2], offset: [-2.4, 0.82, 0.4], color: 0xe8e8e0 },
+      { name: 'missileR', size: [0.16, 0.16, 1.2], offset: [2.4, 0.82, 0.4], color: 0xe8e8e0 },
+      { name: 'deriveL', size: [0.1, 1.0, 0.9], offset: [-0.4, 1.7, 2.0], color: 0x6a737c },
+      { name: 'deriveR', size: [0.1, 1.0, 0.9], offset: [0.4, 1.7, 2.0], color: 0x6a737c },
+      { name: 'planL', size: [1.1, 0.08, 0.7], offset: [-0.9, 1.0, 2.1], color: 0x737d86 },
+      { name: 'planR', size: [1.1, 0.08, 0.7], offset: [0.9, 1.0, 2.1], color: 0x737d86 },
+      { name: 'tuyere', size: [0.7, 0.6, 0.3], offset: [0, 1.0, 2.4], color: 0x2a2a2e },
+      { name: 'flamme', size: [0.45, 0.4, 0.1], offset: [0, 1.0, 2.56], color: 0xffa040 },
+      { name: 'cocarde', size: [0.04, 0.3, 0.3], offset: [-0.46, 1.1, 0.6], color: 0x2a50c0 },
+      { name: 'trainAv', size: [0.12, 0.55, 0.12], offset: [0, 0.4, -2.0], color: 0x3a3a40 },
+      { name: 'roueAv', size: [0.14, 0.24, 0.24], offset: [0, 0.14, -2.0], color: 0x1c1c20 },
+      { name: 'roueL', size: [0.16, 0.26, 0.26], offset: [-0.5, 0.15, 0.6], color: 0x1c1c20 },
+      { name: 'roueR', size: [0.16, 0.26, 0.26], offset: [0.5, 0.15, 0.6], color: 0x1c1c20 },
+    ],
+    { rideable: true, aircraft: true, machine: true, seats: 1, flight: { max: 48, accel: 16, brake: 18, drag: 2.5, stall: 13, missiles: true } }),
+
+  helicopter: M('Hélicoptère', false, 50, 0, 1.8, 2.1, 0, 0, 0, [],
+    [
+      { name: 'cabine', size: [1.5, 1.3, 2.4], offset: [0, 1.15, -0.2], color: 0xd8a020 },
+      { name: 'vitre', size: [1.3, 0.8, 0.6], offset: [0, 1.35, -1.55], color: 0x2a4a6a },
+      { name: 'queue', size: [0.36, 0.36, 3.0], offset: [0, 1.45, 2.4], color: 0xc89418 },
+      { name: 'derive', size: [0.1, 0.8, 0.5], offset: [0, 1.85, 3.75], color: 0xc89418 },
+      { name: 'rotorQueue', size: [0.06, 1.0, 0.14], offset: [0.24, 1.75, 3.75], color: 0x3a3a40, anim: 'tailrotor' },
+      { name: 'mat', size: [0.2, 0.4, 0.2], offset: [0, 1.98, -0.2], color: 0x3a3a40 },
+      { name: 'pale1', size: [6.4, 0.06, 0.3], offset: [0, 2.2, -0.2], color: 0x2a2a2e, anim: 'rotor' },
+      { name: 'pale2', size: [0.3, 0.06, 6.4], offset: [0, 2.2, -0.2], color: 0x2a2a2e, anim: 'rotor' },
+      { name: 'patinL', size: [0.12, 0.1, 2.6], offset: [-0.7, 0.06, -0.2], color: 0x3a3a40 },
+      { name: 'patinR', size: [0.12, 0.1, 2.6], offset: [0.7, 0.06, -0.2], color: 0x3a3a40 },
+      { name: 'jambeL1', size: [0.08, 0.5, 0.08], offset: [-0.6, 0.35, -1.0], color: 0x3a3a40 },
+      { name: 'jambeR1', size: [0.08, 0.5, 0.08], offset: [0.6, 0.35, -1.0], color: 0x3a3a40 },
+      { name: 'jambeL2', size: [0.08, 0.5, 0.08], offset: [-0.6, 0.35, 0.6], color: 0x3a3a40 },
+      { name: 'jambeR2', size: [0.08, 0.5, 0.08], offset: [0.6, 0.35, 0.6], color: 0x3a3a40 },
+    ],
+    { rideable: true, aircraft: true, machine: true, seats: 4, flight: { max: 16, accel: 10, brake: 14, drag: 6, stall: 0, heli: true } }),
+
+  airbus: M('Airbus', false, 120, 0, 3.0, 3.2, 0, 0, 0, [],
+    [
+      { name: 'fuselage', size: [2.6, 2.6, 14], offset: [0, 2.3, 0], color: 0xf2f2f4 },
+      { name: 'nez', size: [2.2, 2.0, 1.6], offset: [0, 2.15, -7.7], color: 0xf2f2f4 },
+      { name: 'cockpit', size: [1.6, 0.5, 0.2], offset: [0, 2.85, -8.5], color: 0x1a2a3a },
+      { name: 'bande', size: [2.64, 0.3, 14], offset: [0, 2.6, 0], color: 0x1a3a8a },
+      { name: 'hublotsL', size: [0.04, 0.3, 11], offset: [-1.31, 2.95, 0.3], color: 0x2a3a4a },
+      { name: 'hublotsR', size: [0.04, 0.3, 11], offset: [1.31, 2.95, 0.3], color: 0x2a3a4a },
+      { name: 'aileL', size: [8, 0.2, 2.6], offset: [-5.2, 1.6, 0.6], color: 0xdcdce0 },
+      { name: 'aileR', size: [8, 0.2, 2.6], offset: [5.2, 1.6, 0.6], color: 0xdcdce0 },
+      { name: 'moteurL', size: [0.9, 0.9, 2.0], offset: [-3.6, 1.1, -0.4], color: 0xbcbcc4 },
+      { name: 'moteurR', size: [0.9, 0.9, 2.0], offset: [3.6, 1.1, -0.4], color: 0xbcbcc4 },
+      { name: 'entreeL', size: [0.7, 0.7, 0.05], offset: [-3.6, 1.1, -1.42], color: 0x1c1c20 },
+      { name: 'entreeR', size: [0.7, 0.7, 0.05], offset: [3.6, 1.1, -1.42], color: 0x1c1c20 },
+      { name: 'derive', size: [0.25, 3.0, 2.2], offset: [0, 4.6, 6.2], color: 0x1a3a8a },
+      { name: 'planL', size: [3.2, 0.15, 1.4], offset: [-2.2, 2.6, 6.4], color: 0xdcdce0 },
+      { name: 'planR', size: [3.2, 0.15, 1.4], offset: [2.2, 2.6, 6.4], color: 0xdcdce0 },
+      { name: 'trainAv', size: [0.2, 1.0, 0.2], offset: [0, 0.5, -5.8], color: 0x3a3a40 },
+      { name: 'roueAv', size: [0.3, 0.4, 0.4], offset: [0, 0.2, -5.8], color: 0x1c1c20 },
+      { name: 'roueL', size: [0.4, 0.5, 0.5], offset: [-1.4, 0.25, 0.8], color: 0x1c1c20 },
+      { name: 'roueR', size: [0.4, 0.5, 0.5], offset: [1.4, 0.25, 0.8], color: 0x1c1c20 },
+    ],
+    { rideable: true, aircraft: true, machine: true, seats: 8, flight: { max: 34, accel: 5, brake: 8, drag: 1.5, stall: 14 } }),
+
+  // Zombie mutant : un colosse de trois blocs, 700 points de vie. Il frappe
+  // fort et projette loin ; une barre de vie s'affiche quand il est proche.
+  mutant_zombie: M('Zombie mutant', true, 700, 2.0, 1.5, 3.2, 14, 32, 150,
+    [
+      { key: 'rotten_flesh', min: 6, max: 12 },
+      { key: 'iron_ingot', min: 2, max: 6 },
+      { key: 'diamond', min: 1, max: 3 },
+    ],
+    [
+      { name: 'head', size: [0.95, 0.9, 0.9], offset: [0, 2.75, -0.35], color: 0x3e6e30, anim: 'head' },
+      { name: 'eyeL', size: [0.2, 0.14, 0.06], offset: [-0.24, 2.85, -0.82], color: 0xd02020, anim: 'head' },
+      { name: 'eyeR', size: [0.2, 0.14, 0.06], offset: [0.24, 2.85, -0.82], color: 0xd02020, anim: 'head' },
+      { name: 'machoire', size: [0.7, 0.16, 0.06], offset: [0, 2.5, -0.82], color: 0x1b2a14, anim: 'head' },
+      { name: 'dents', size: [0.6, 0.06, 0.07], offset: [0, 2.6, -0.83], color: 0xe8e0c8, anim: 'head' },
+      { name: 'body', size: [1.5, 1.4, 0.9], offset: [0, 1.85, 0], color: 0x2a6a8a },
+      { name: 'dos', size: [1.2, 0.5, 0.6], offset: [0, 2.45, 0.25], color: 0x3e6e30 },
+      { name: 'armL', size: [0.6, 2.0, 0.6], offset: [-1.1, 1.75, -0.2], color: 0x3e6e30, anim: 'armL' },
+      { name: 'armR', size: [0.6, 2.0, 0.6], offset: [1.1, 1.75, -0.2], color: 0x3e6e30, anim: 'armR' },
+      { name: 'poingL', size: [0.75, 0.6, 0.75], offset: [-1.1, 0.6, -0.2], color: 0x2e5a24, anim: 'armL' },
+      { name: 'poingR', size: [0.75, 0.6, 0.75], offset: [1.1, 0.6, -0.2], color: 0x2e5a24, anim: 'armR' },
+      { name: 'legL', size: [0.55, 1.15, 0.55], offset: [-0.4, 0.58, 0], color: 0x2a3a6a, anim: 'legFL' },
+      { name: 'legR', size: [0.55, 1.15, 0.55], offset: [0.4, 0.58, 0], color: 0x2a3a6a, anim: 'legFR' },
+    ],
+    { knockback: 11 }),
 };
 
 // --- Modèle de vol ---------------------------------------------------------
 // Volontairement « arcade » : on vole là où l'on regarde, et la seule chose à
 // surveiller est la vitesse. Un modèle réaliste demanderait un manche, des
 // gouvernes et un compensateur — hors de portée d'un enfant à la souris.
-/** Vitesse maximale, en blocs par seconde. */
-const PLANE_MAX = 26;
-/** Poussée, freinage et traînée, en blocs par seconde carrée. */
-const PLANE_ACCEL = 9;
-const PLANE_BRAKE = 13;
-const PLANE_DRAG = 2.2;
-/** En dessous de cette vitesse, la portance s'efface et l'avion décroche. */
-const PLANE_STALL = 9;
+/** Le petit avion : les autres aéronefs précisent leur propre `flight`. */
+export const PLANE_FLIGHT: FlightSpec = { max: 26, accel: 9, brake: 13, drag: 2.2, stall: 9 };
 
 /** Longueur d'une laisse, en blocs : au-delà, la bête est rappelée. */
 export const LEASH_RANGE = 5;
@@ -710,7 +818,8 @@ export class Mob {
     // poursuite. Le brancher dans la chaîne commune reviendrait à laisser
     // l'errance écraser les commandes une image sur deux.
     if (this.def.aircraft && this.ridden) {
-      this.updateAircraft(dt, world, dayFactor);
+      if (this.def.flight?.heli) this.updateHelicopter(dt, world, dayFactor);
+      else this.updateAircraft(dt, world, dayFactor);
       return;
     }
     // Un véhicule garé obéit à la même physique, commandes au neutre : il
@@ -971,9 +1080,10 @@ export class Mob {
    * dessous la portance s'efface et il retombe.
    */
   private updateAircraft(dt: number, world: World, dayFactor: number): void {
-    if (this.driveJump) this.airspeed = Math.min(PLANE_MAX, this.airspeed + PLANE_ACCEL * dt);
-    else if (this.driveBrake) this.airspeed = Math.max(0, this.airspeed - PLANE_BRAKE * dt);
-    else this.airspeed = Math.max(0, this.airspeed - PLANE_DRAG * dt);
+    const F = this.def.flight ?? PLANE_FLIGHT;
+    if (this.driveJump) this.airspeed = Math.min(F.max, this.airspeed + F.accel * dt);
+    else if (this.driveBrake) this.airspeed = Math.max(0, this.airspeed - F.brake * dt);
+    else this.airspeed = Math.max(0, this.airspeed - F.drag * dt);
 
     // Cap et assiette visés, lissés : sans ça, un coup de souris ferait pivoter
     // l'avion instantanément et le vol serait illisible.
@@ -991,7 +1101,7 @@ export class Mob {
     // exactement la trajectoire visée — et s'effondre au carré en dessous : un
     // décrochage doit se creuser vite, sinon l'avion plane indéfiniment moteur
     // coupé et la vitesse cesse d'être un enjeu.
-    const v = Math.min(1, this.airspeed / PLANE_STALL);
+    const v = Math.min(1, this.airspeed / F.stall);
     const portance = v * v;
     this.velocity.x = dx * this.airspeed;
     this.velocity.z = dz * this.airspeed;
@@ -1013,7 +1123,7 @@ export class Mob {
     // Un choc contre le relief coupe l'élan : on ne traverse pas une colline.
     if (res.hitX || res.hitZ) this.airspeed *= 0.3;
     // Au sol, les roues freinent toutes seules.
-    if (res.onGround && !this.driveJump) this.airspeed = Math.max(0, this.airspeed - PLANE_DRAG * 2 * dt);
+    if (res.onGround && !this.driveJump) this.airspeed = Math.max(0, this.airspeed - F.drag * 2 * dt);
     if (this.position.y < -8) { this.dead = true; return; }
 
     this.group.position.copy(this.position);
@@ -1027,6 +1137,48 @@ export class Mob {
     this.walkPhase += dt * (2 + this.airspeed);
     this.animate(this.airspeed);
 
+    const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));
+    voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
+    (this.material.uniforms.uLight.value as Color).copy(lightColor);
+    this.material.uniforms.uFlash.value = this.hurtFlash;
+  }
+
+  /**
+   * Hélicoptère. Il tient en l'air tout seul : `driveX`/`driveZ` le déplacent
+   * dans le repère de son cap (qui suit le regard), le saut le fait monter et
+   * l'accroupissement descendre. Il penche dans le sens où il avance.
+   */
+  private updateHelicopter(dt: number, world: World, dayFactor: number): void {
+    const F = this.def.flight!;
+    const dYaw = wrapAngle(this.driveYaw - this.yaw);
+    this.yaw = wrapAngle(this.yaw + dYaw * Math.min(1, 3 * dt));
+    // Avant (-sin, -cos) et droite (cos, -sin), dans la convention de la caméra.
+    const fx = -Math.sin(this.yaw), fz = -Math.cos(this.yaw);
+    const rx = Math.cos(this.yaw), rz = -Math.sin(this.yaw);
+    const wantX = (fx * this.driveZ + rx * this.driveX) * F.max;
+    const wantZ = (fz * this.driveZ + rz * this.driveX) * F.max;
+    const k = Math.min(1, 2.5 * dt);
+    this.velocity.x += (wantX - this.velocity.x) * k;
+    this.velocity.z += (wantZ - this.velocity.z) * k;
+    const climb = this.driveJump ? 7 : this.driveBrake ? -6 : 0;
+    this.velocity.y += (climb - this.velocity.y) * Math.min(1, 4 * dt);
+    this.airspeed = Math.hypot(this.velocity.x, this.velocity.z);
+
+    // Il pique du nez pour avancer, et s'incline dans les dérapages.
+    this.pitch += (this.driveZ * 0.25 - this.pitch) * Math.min(1, 3 * dt);
+    this.roll += (-this.driveX * 0.25 - this.roll) * Math.min(1, 3 * dt);
+
+    const d = this.def;
+    const box: Box = { x: this.position.x, y: this.position.y, z: this.position.z, width: d.width, height: d.height };
+    const res = moveBox(world, box, this.velocity, dt, 0.55);
+    this.position.set(box.x, box.y, box.z);
+    this.onGround = res.onGround;
+    if (this.position.y < -8) { this.dead = true; return; }
+
+    this.group.position.copy(this.position);
+    this.group.rotation.order = 'YXZ';
+    this.group.rotation.set(-this.pitch, this.yaw, this.roll);
+    this.animate(10);
     const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));
     voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
     (this.material.uniforms.uLight.value as Color).copy(lightColor);
@@ -1116,8 +1268,23 @@ export class Mob {
     }
   }
 
+  /** Cap et assiette actuels (pour asseoir pilote et passagers). */
+  attitude(): { yaw: number; pitch: number } {
+    return { yaw: this.yaw, pitch: this.def.aircraft ? this.pitch : 0 };
+  }
+
   /** Bout du canon, dans le monde : là d'où part l'obus. */
   muzzle(out: Vector3): Vector3 {
+    if (this.def.aircraft) {
+      // Sous le nez de l'appareil, dans l'axe de son vol.
+      const cp = Math.cos(this.pitch);
+      const L = this.def.height + 2.5;
+      return out.set(
+        this.position.x - Math.sin(this.yaw) * cp * L,
+        this.position.y + this.def.height * 0.45 - Math.sin(this.pitch) * L,
+        this.position.z - Math.cos(this.yaw) * cp * L,
+      );
+    }
     const a = this.turretYaw;
     return out.set(
       this.position.x + Math.sin(a) * 3.2,
@@ -1176,6 +1343,13 @@ export class Mob {
         case 'wheel':
           p.mesh.rotation.x = -this.wheelTurn;
           break;
+        // Rotor : il tourne vite en vol, au ralenti posé sans pilote.
+        case 'rotor':
+          p.mesh.rotation.y = this.age * (this.ridden ? 22 : 2);
+          break;
+        case 'tailrotor':
+          p.mesh.rotation.x = this.age * (this.ridden ? 30 : 3);
+          break;
         case 'turret': {
           // Pivot au centre de la tourelle, dans le repère du véhicule.
           const a = wrapAngle(this.turretYaw - this.yaw);
@@ -1207,7 +1381,7 @@ export class Mob {
         );
         continue;
       }
-      if (p.anim && p.anim !== 'head' && p.anim !== 'none' && p.anim !== 'prop' && p.anim !== 'wheel') {
+      if (p.anim && p.anim !== 'head' && p.anim !== 'none' && p.anim !== 'prop' && p.anim !== 'wheel' && p.anim !== 'rotor' && p.anim !== 'tailrotor') {
         // Pivot au sommet de la pièce plutôt qu'en son centre.
         const h = (p.mesh.geometry as BoxGeometry).parameters.height;
         const r = p.mesh.rotation.x;
