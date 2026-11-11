@@ -13,7 +13,21 @@ import { iconFor } from './icons';
 
 export type ScreenName =
   | 'none' | 'menu' | 'worlds' | 'create' | 'settings' | 'pause'
-  | 'inventory' | 'crafting' | 'furnace' | 'chest' | 'death' | 'help';
+  | 'inventory' | 'crafting' | 'furnace' | 'chest' | 'death' | 'help'
+  | 'multi' | 'join';
+
+/** État du multijoueur, tel que l'écran l'affiche. */
+export interface MultiInfo {
+  available: boolean;
+  connected: boolean;
+  role: 'host' | 'guest' | null;
+  link: string | null;
+  players: string[];
+  name: string;
+  inWorld: boolean;
+  /** Dernière erreur de connexion, affichée sur l'écran pour rejoindre. */
+  error: string;
+}
 
 export interface FurnaceState {
   input: Container;
@@ -40,6 +54,10 @@ export interface ScreenContext {
   isCreative(): boolean;
   onCraft(): void;
   runCommand(cmd: string): void;
+  multiInfo(): MultiInfo;
+  openMulti(name: string, pass: string): void;
+  joinMulti(codeOrLink: string, name: string, pass: string): void;
+  leaveMulti(): void;
   currentFurnace(): FurnaceState | null;
   currentChest(): Container | null;
   sound(name: 'click' | 'craft'): void;
@@ -125,6 +143,8 @@ export class Screens {
       case 'chest': this.buildChest(); break;
       case 'death': this.buildDeath(); break;
       case 'help': this.buildHelp(); break;
+      case 'multi': this.buildMulti(); break;
+      case 'join': this.buildJoin(); break;
     }
     this.refreshAll();
   }
@@ -146,6 +166,7 @@ export class Screens {
     sub.textContent = 'Bac à sable voxel — monde infini, artisanat, survie.';
     this.button(p, 'Jouer', 'primary', () => this.show('worlds'));
     this.button(p, 'Nouveau monde', '', () => this.show('create'));
+    this.button(p, 'Rejoindre une partie', '', () => this.show('join'));
     this.button(p, 'Options', '', () => this.show('settings'));
     this.button(p, 'Commandes & aide', '', () => this.show('help'));
   }
@@ -286,9 +307,89 @@ export class Screens {
     const p = el('div', 'panel', s);
     el('h1', undefined, p).textContent = 'PAUSE';
     this.button(p, 'Reprendre', 'primary', () => this.ctx.resume());
+    this.button(p, 'Multijoueur', '', () => this.show('multi'));
     this.button(p, 'Options', '', () => { this.previous = 'pause'; this.show('settings'); });
     this.button(p, 'Commandes & aide', '', () => { this.previous = 'pause'; this.show('help'); });
     this.button(p, 'Sauvegarder et quitter', 'danger', () => this.ctx.quitToMenu());
+  }
+
+  // --- Multijoueur -------------------------------------------------------------
+
+  private textField(parent: HTMLElement, label: string, value: string, type = 'text', placeholder = ''): HTMLInputElement {
+    const f = el('label', 'field', parent);
+    el('span', undefined, f).textContent = label;
+    const i = el('input', undefined, f);
+    i.type = type;
+    i.value = value;
+    i.placeholder = placeholder;
+    i.maxLength = type === 'password' ? 64 : 200;
+    return i;
+  }
+
+  /** Depuis la pause : ouvrir son monde aux amis, ou voir la partie en cours. */
+  private buildMulti(): void {
+    const info = this.ctx.multiInfo();
+    const s = el('div', 'screen', this.root);
+    const p = el('div', 'panel', s);
+    el('h1', undefined, p).textContent = 'MULTIJOUEUR';
+
+    if (!info.available) {
+      el('p', 'sub', p).textContent = 'Le serveur de parties n’est pas encore installé sur ce site.';
+    } else if (info.connected && info.link) {
+      el('p', 'sub', p).textContent = info.role === 'host'
+        ? 'Ta partie est ouverte. Envoie ce lien à tes amis :'
+        : 'Tu joues dans une partie partagée. Lien d’invitation :';
+      const linkInput = this.textField(p, 'Lien d’invitation', info.link);
+      linkInput.readOnly = true;
+      linkInput.addEventListener('focus', () => linkInput.select());
+      this.button(p, 'Copier le lien', 'primary', () => {
+        void navigator.clipboard?.writeText(info.link!).catch(() => undefined);
+        linkInput.select();
+      });
+      el('p', 'sub', p).textContent = info.players.length
+        ? `Avec toi : ${info.players.join(', ')}.`
+        : 'Personne d’autre pour l’instant.';
+      el('p', 'sub', p).textContent = 'Discuter : console (T) puis « /dire bonjour ».';
+      this.button(p, 'Quitter la partie (jouer seul)', 'danger', () => { this.ctx.leaveMulti(); this.show('pause'); });
+    } else if (info.inWorld) {
+      el('p', 'sub', p).textContent = 'Ouvre ce monde à tes amis : ils le rejoignent avec un lien secret.';
+      const name = this.textField(p, 'Ton pseudo', info.name, 'text', 'ex. Léa');
+      name.maxLength = 16;
+      const pass = this.textField(p, 'Mot de passe (facultatif)', '', 'password', 'à donner aux amis');
+      this.button(p, 'Ouvrir la partie', 'primary', () => {
+        this.ctx.openMulti(name.value, pass.value);
+        this.ctx.resume();
+      });
+    }
+    this.button(p, 'Retour', '', () => this.show('pause'));
+  }
+
+  /** Depuis le menu principal (ou un lien d'invitation) : rejoindre une partie. */
+  private buildJoin(): void {
+    const info = this.ctx.multiInfo();
+    const s = el('div', 'screen menu', this.root);
+    const p = el('div', 'panel', s);
+    el('h1', undefined, p).textContent = 'REJOINDRE';
+    if (!info.available) {
+      el('p', 'sub', p).textContent = 'Le serveur de parties n’est pas encore installé sur ce site.';
+      this.button(p, 'Retour', '', () => this.show('menu'));
+      return;
+    }
+    el('p', 'sub', p).textContent = 'Colle le lien reçu d’un ami (ou le code de la partie).';
+    if (info.error) {
+      const e = el('p', 'sub', p);
+      e.textContent = `⚠ ${info.error}`;
+      e.style.color = '#ff8f7f';
+    }
+    const fromUrl = /[?&]partie=([A-Za-z0-9_-]{16,64})/.exec(location.search)?.[1] ?? '';
+    const code = this.textField(p, 'Lien ou code', fromUrl, 'text', 'https://…?partie=…');
+    const name = this.textField(p, 'Ton pseudo', info.name, 'text', 'ex. Léa');
+    name.maxLength = 16;
+    const pass = this.textField(p, 'Mot de passe (si l’hôte en a mis un)', '', 'password');
+    this.button(p, 'Rejoindre', 'primary', () => {
+      this.ctx.joinMulti(code.value, name.value, pass.value);
+    });
+    this.button(p, 'Retour', '', () => this.show('menu'));
   }
 
   private buildDeath(): void {

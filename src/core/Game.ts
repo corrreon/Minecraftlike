@@ -6,6 +6,9 @@
 import {
   BoxGeometry,
   BufferAttribute,
+  CanvasTexture,
+  Sprite,
+  SpriteMaterial,
   BufferGeometry,
   Color,
   EdgesGeometry,
@@ -61,9 +64,24 @@ import { World } from '../world/World';
 import { WorkerPool } from '../world/WorkerPool';
 import { NETHER_LAVA, ONEBLOCK_X, ONEBLOCK_Y, ONEBLOCK_Z, TerrainGenerator, type Dimension, type GenKind, type WorldType } from '../world/generator';
 import { Hud, type TouchHandlers } from '../ui/Hud';
-import { Screens, type FurnaceState } from '../ui/Screens';
+import { Screens, type FurnaceState, type MultiInfo } from '../ui/Screens';
 import { buildIcons } from '../ui/icons';
 import { mulberry32 } from '../world/noise';
+import { MULTI_URL, NetSession, inviteLink, newRoomCode, parseRoomCode, type Edit, type HelloOptions, type Welcome } from '../net/Multiplayer';
+
+/** Avatar d'un autre joueur de la partie. */
+interface RemoteAvatar {
+  name: string;
+  group: Group;
+  limbs: Group[];
+  target: Vector3;
+  yaw: number;
+  dimension: string;
+  phase: number;
+  seen: boolean;
+}
+
+const PSEUDO_KEY = 'voxelcraft-pseudo';
 
 const MOB_TICK = 1.8;
 /** Vitesse de décrochage d'un avion, dupliquée ici pour l'affichage. */
@@ -139,6 +157,24 @@ export class Game {
   private drops: ItemEntity[] = [];
   /** Créature actuellement montée, ou null. */
   private mount: Mob | null = null;
+  // --- Multijoueur ---
+  private net: NetSession | null = null;
+  private netRole: 'host' | 'guest' | null = null;
+  private netHello: HelloOptions | null = null;
+  /** La partie a accueilli ce client (message `welcome` reçu). */
+  private netWelcomed = false;
+  /** Le monde local est prêt à recevoir les blocs du serveur. */
+  private netWorldReady = false;
+  /** Blocs reçus avant que le monde local soit prêt. */
+  private netQueue: Edit[] = [];
+  private applyingRemote = false;
+  private remotes = new Map<number, RemoteAvatar>();
+  private netPosTimer = 0;
+  private lastSentPos = '';
+  private netRetries = 0;
+  private netRetryTimer: number | null = null;
+  private netError = '';
+
   /** Siège occupé (siège gamer), en coordonnées de bloc. */
   private seat: { x: number; y: number; z: number } | null = null;
   /** Délai avant le prochain tir, et verrou du tir coup par coup. */
@@ -265,7 +301,7 @@ export class Game {
       applySettings: () => this.applySettings(),
       listWorlds: () => listWorlds(this.db),
       createWorld: (name, seed, mode, flat) => void this.createWorld(name, seed, mode, flat).catch((e) => this.loadFailed(e)),
-      playWorld: (meta) => void this.startWorld(meta).catch((e) => this.loadFailed(e)),
+      playWorld: (meta) => void this.startWorld(meta).then(() => this.resumeMultiplayer()).catch((e) => this.loadFailed(e)),
       deleteWorld: (id) => dbDeleteWorld(this.db, id),
       resume: () => this.closeScreen(),
       quitToMenu: () => void this.quitToMenu(),
@@ -274,6 +310,10 @@ export class Game {
       isCreative: () => this.player.mode === GameMode.Creative,
       onCraft: () => this.hud.updateHotbar(this.inventory, true),
       runCommand: (c) => this.runCommand(c),
+      multiInfo: () => this.multiInfo(),
+      openMulti: (name, pass) => this.openMultiplayer(name, pass),
+      joinMulti: (code, name, pass) => this.joinMultiplayer(code, name, pass),
+      leaveMulti: () => this.leaveMultiplayer(true),
       currentFurnace: () => {
         const e = this.openBlockPos ? this.blockEntities.get(this.openBlockPos) : null;
         return e && 'burn' in e ? e : null;
@@ -600,7 +640,9 @@ export class Game {
     this.db = await openDatabase();
     onProgress(1, 'Prêt.');
     this.resize();
-    this.screens.show('menu');
+    // Lien d'invitation : on arrive directement sur l'écran pour rejoindre.
+    const code = parseRoomCode(location.search);
+    this.screens.show(code ? 'join' : 'menu');
     this.hud.show(false);
     this.running = true;
     this.lastTime = performance.now();
@@ -750,6 +792,7 @@ export class Game {
   }
 
   private async quitToMenu(): Promise<void> {
+    this.leaveMultiplayer(false);
     await this.persist(true);
     this.teardownWorld();
     this.save = null;
@@ -1105,6 +1148,15 @@ export class Game {
     const parts = text.split(/\s+/);
     const cmd = (parts.shift() ?? '').toLowerCase();
     switch (cmd) {
+      case 'dire':
+      case 'say':
+      case 'chat': {
+        const msg = parts.join(' ').trim();
+        if (!msg) { this.echo('Usage : /dire <message>'); break; }
+        if (!this.net || !this.netWelcomed) { this.echo('Pas de partie multijoueur en cours.'); break; }
+        this.net.chat(msg);
+        break;
+      }
       case 'gamemode':
       case 'gm': {
         const m = parts[0]?.toLowerCase();
@@ -1415,6 +1467,7 @@ export class Game {
     if (active) { this.updateMount(dt); this.updateSeat(); }
     this.updateTracers(dt);
     this.updateGauge();
+    this.updateNet(dt, active);
     this.updateBlockEntities(dt);
     if (this.settings.particles) this.particles.update(dt, this.skyState.dayFactor);
 
@@ -2474,6 +2527,311 @@ export class Game {
     return true;
   }
 
+  // --- Multijoueur ----------------------------------------------------------
+
+  private multiInfo(): MultiInfo {
+    let name = '';
+    try { name = localStorage.getItem(PSEUDO_KEY) ?? ''; } catch { /* stockage indisponible */ }
+    return {
+      available: MULTI_URL !== '',
+      connected: this.net !== null && this.netWelcomed,
+      role: this.netRole,
+      link: this.net ? inviteLink(this.net.room) : null,
+      players: [...this.remotes.values()].map((r) => r.name),
+      name: this.netHello?.name ?? this.save?.meta.mpName ?? name,
+      inWorld: this.save !== null,
+      error: this.netError,
+    };
+  }
+
+  private rememberPseudo(name: string): void {
+    try { localStorage.setItem(PSEUDO_KEY, name); } catch { /* stockage indisponible */ }
+  }
+
+  /** Ouvre le monde courant aux amis : il devient une partie partagée. */
+  private openMultiplayer(name: string, pass: string): void {
+    if (!MULTI_URL) { this.hud.toast('Le multijoueur n’est pas encore installé sur ce site.', 'error'); return; }
+    if (!this.save || this.net) return;
+    const meta = this.save.meta;
+    if (meta.mpGuest) { this.hud.toast('Ce monde est déjà une partie rejointe.', 'warn'); return; }
+    name = name.trim() || 'Hôte';
+    this.rememberPseudo(name);
+    meta.mpRoom = meta.mpRoom ?? newRoomCode();
+    meta.mpName = name;
+    meta.mpPass = pass;
+    void this.save.createOrUpdateMeta();
+    this.netWorldReady = true;
+    this.startNet(meta.mpRoom, 'host', {
+      name, pass,
+      host: { seed: meta.seed, type: this.worldType, mode: meta.mode, owner: meta.mpOwner },
+    });
+  }
+
+  /** Rejoint une partie depuis un lien ou un code. */
+  private joinMultiplayer(codeOrLink: string, name: string, pass: string): void {
+    if (!MULTI_URL) { this.hud.toast('Le multijoueur n’est pas encore installé sur ce site.', 'error'); return; }
+    const room = parseRoomCode(codeOrLink);
+    if (!room) { this.hud.toast('Lien ou code de partie invalide.', 'error'); return; }
+    name = name.trim() || 'Joueur';
+    this.rememberPseudo(name);
+    this.leaveMultiplayer(false);
+    this.netWorldReady = this.save?.meta.id === `mp-${room}`;
+    this.netError = '';
+    this.setLoading(true, 'Connexion à la partie…');
+    this.startNet(room, 'guest', { name, pass });
+    // Le lien a servi : un rechargement de la page ne doit pas rejoindre à nouveau.
+    if (location.search.includes('partie=')) history.replaceState(null, '', location.pathname);
+  }
+
+  /** Un monde déjà partagé se reconnecte tout seul à sa partie quand on le rouvre. */
+  private resumeMultiplayer(): void {
+    const meta = this.save?.meta;
+    if (!meta?.mpRoom || !MULTI_URL || this.net) return;
+    if (meta.mpGuest) {
+      this.netWorldReady = true;
+      this.startNet(meta.mpRoom, 'guest', { name: meta.mpName ?? 'Joueur', pass: meta.mpPass ?? '' });
+    } else {
+      this.openMultiplayer(meta.mpName ?? 'Hôte', meta.mpPass ?? '');
+    }
+  }
+
+  private startNet(room: string, role: 'host' | 'guest', hello: HelloOptions): void {
+    this.netRole = role;
+    this.netHello = hello;
+    this.netWelcomed = false;
+    const session = new NetSession(room, {
+      onWelcome: (w) => this.onNetWelcome(session, w),
+      onOwnerToken: (token) => {
+        if (this.save && role === 'host') { this.save.meta.mpOwner = token; void this.save.createOrUpdateMeta(); }
+      },
+      onBlocks: (edits) => this.applyRemoteEdits(edits),
+      onReady: () => { if (role === 'guest') this.hud.toast('Monde synchronisé avec la partie.'); },
+      onJoin: (id, name) => { this.addRemote(id, name); this.hud.toast(`${name} a rejoint la partie.`); },
+      onLeave: (id) => {
+        const r = this.remotes.get(id);
+        if (r) { this.hud.toast(`${r.name} a quitté la partie.`); this.removeRemote(id); }
+      },
+      onPos: (id, x, y, z, yaw, _pitch, d) => {
+        const r = this.remotes.get(id) ?? this.addRemote(id, 'Joueur');
+        r.target.set(x, y, z);
+        r.yaw = yaw;
+        r.dimension = d;
+        if (!r.seen) { r.group.position.copy(r.target); r.seen = true; }
+      },
+      onChat: (name, text) => { this.hud.toast(`💬 ${name} : ${text}`, 'info', 6000); this.echo(`<${name}> ${text}`); },
+      onError: (message, fatal) => {
+        this.hud.toast(message, fatal ? 'error' : 'warn', 5000);
+        if (fatal) {
+          this.netError = message;
+          const wasWaiting = role === 'guest' && !this.netWelcomed;
+          this.leaveMultiplayer(false);
+          if (wasWaiting && !this.save) { this.setLoading(false, ''); this.screens.show('join'); }
+        }
+      },
+      onClose: () => this.onNetClosed(),
+    });
+    this.net = session;
+    session.connect(hello);
+  }
+
+  private onNetWelcome(session: NetSession, w: Welcome): void {
+    if (session !== this.net) return;
+    this.netWelcomed = true;
+    this.netRetries = 0;
+    for (const p of w.players) {
+      const r = this.addRemote(p.id, p.name);
+      r.target.set(p.x, p.y, p.z);
+    }
+    if (this.netRole === 'host') {
+      if (this.save && w.seed !== this.save.meta.seed) {
+        // Le code appartient à une autre partie (jeton perdu) : on en ouvre une neuve.
+        this.hud.toast('Ancienne partie introuvable : nouveau lien créé.', 'warn');
+        const hello = this.netHello!;
+        this.leaveMultiplayer(false);
+        this.save.meta.mpRoom = undefined;
+        this.save.meta.mpOwner = undefined;
+        this.openMultiplayer(hello.name, hello.pass);
+        return;
+      }
+      if (w.created && this.save) session.upload(this.save.overworldEdits());
+      const link = inviteLink(session.room);
+      void navigator.clipboard?.writeText(link).catch(() => undefined);
+      this.hud.toast(w.created ? 'Partie ouverte ! Lien d’invitation copié.' : 'Reconnecté à ta partie.', 'info', 5000);
+      return;
+    }
+    // Invité : on ouvre (ou on reprend) la copie locale de la partie.
+    if (this.netWorldReady) { this.hud.toast(`Connecté à la partie de ${w.host}.`); return; }
+    void this.openGuestWorld(session.room, w).catch((e) => this.loadFailed(e));
+  }
+
+  private async openGuestWorld(room: string, w: Welcome): Promise<void> {
+    const id = `mp-${room}`;
+    const existing = (await listWorlds(this.db)).find((m) => m.id === id);
+    const now = Date.now();
+    const meta: WorldMeta = existing ?? {
+      id, name: `Partie de ${w.host}`, seed: w.seed, mode: w.mode,
+      created: now, lastPlayed: now, playtime: 0, dayTime: 0.42,
+      type: w.type, flat: w.type === 'flat',
+    };
+    meta.mpRoom = room;
+    meta.mpGuest = true;
+    meta.mpName = this.netHello?.name;
+    meta.mpPass = this.netHello?.pass;
+    const net = this.net;
+    // `startWorld` repart d'un monde vierge : la session réseau, elle, continue.
+    await this.startWorld(meta, true);
+    if (this.net !== net) return;
+    this.netWorldReady = true;
+    const queued = this.netQueue;
+    this.netQueue = [];
+    this.applyRemoteEdits(queued);
+    this.hud.toast(`Bienvenue dans la partie de ${w.host} !`);
+  }
+
+  /** Blocs modifiés par les autres : appliqués sans être renvoyés. */
+  private applyRemoteEdits(edits: Edit[]): void {
+    if (!this.netWorldReady || !this.save) { for (const e of edits) this.netQueue.push(e); return; }
+    this.applyingRemote = true;
+    for (const [x, y, z, id] of edits) {
+      if (y < 0 || y >= WORLD_HEIGHT || id < 0 || id >= BLOCKS.length) continue;
+      const cx = floorDiv(x, CHUNK_X), cz = floorDiv(z, CHUNK_Z);
+      if (this.dimension === 'overworld') this.world.setBlock(x, y, z, id);
+      // Enregistré même si le chunk n'est pas chargé : il sera appliqué à sa génération.
+      this.save.recordOverworldEdit(cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
+    }
+    this.applyingRemote = false;
+  }
+
+  private onNetClosed(): void {
+    const hello = this.netHello, role = this.netRole, room = this.net?.room;
+    // Invité qui n'a pas encore de monde : rien à retenter en arrière-plan.
+    if (role === 'guest' && !this.netWelcomed && !this.save) {
+      this.leaveMultiplayer(false);
+      this.setLoading(false, '');
+      this.netError = this.netError || 'Impossible de joindre la partie : vérifie le lien et ta connexion.';
+      this.screens.show('join');
+      return;
+    }
+    this.net = null;
+    this.netWelcomed = false;
+    for (const id of [...this.remotes.keys()]) this.removeRemote(id);
+    if (!hello || !role || !room || this.netRetries >= 5) {
+      this.hud.toast('Déconnecté de la partie.', 'warn');
+      this.netRole = null;
+      this.netHello = null;
+      return;
+    }
+    // Coupure réseau : on retente quelques fois, de plus en plus espacé.
+    this.netRetries++;
+    this.hud.toast(`Connexion perdue, nouvelle tentative (${this.netRetries}/5)…`, 'warn', 2500);
+    this.netRetryTimer = window.setTimeout(() => {
+      this.netRetryTimer = null;
+      if (this.net || !this.save) return;
+      this.startNet(room, role, hello);
+    }, 1500 * this.netRetries);
+  }
+
+  private leaveMultiplayer(announce: boolean): void {
+    if (this.netRetryTimer !== null) { clearTimeout(this.netRetryTimer); this.netRetryTimer = null; }
+    const was = this.net !== null;
+    this.net?.close();
+    this.net = null;
+    this.netRole = null;
+    this.netHello = null;
+    this.netWelcomed = false;
+    this.netQueue = [];
+    this.netRetries = 0;
+    for (const id of [...this.remotes.keys()]) this.removeRemote(id);
+    if (announce && was) this.hud.toast('Tu as quitté la partie : ton monde redevient solo.');
+    if (announce && this.save) {
+      // Quitter volontairement : le monde ne se reconnectera plus tout seul.
+      this.save.meta.mpRoom = this.save.meta.mpGuest ? this.save.meta.mpRoom : undefined;
+      if (!this.save.meta.mpGuest) this.save.meta.mpOwner = undefined;
+      void this.save.createOrUpdateMeta();
+    }
+  }
+
+  private addRemote(id: number, name: string): RemoteAvatar {
+    const existing = this.remotes.get(id);
+    if (existing) { if (name !== 'Joueur') this.setRemoteName(existing, name); return existing; }
+    const shirts = [0xd04a3a, 0x3ac85a, 0xc8a83a, 0x9a4ac8, 0x3ac8c0, 0xe07a2a, 0xe04a9a];
+    const { group, limbs } = this.makeAvatar(shirts[id % shirts.length]);
+    const r: RemoteAvatar = { name, group, limbs, target: new Vector3(), yaw: 0, dimension: 'overworld', phase: 0, seen: false };
+    this.setRemoteName(r, name);
+    group.visible = false;
+    this.entityGroup.add(group);
+    this.remotes.set(id, r);
+    return r;
+  }
+
+  private setRemoteName(r: RemoteAvatar, name: string): void {
+    r.name = name;
+    const old = r.group.getObjectByName('pseudo');
+    if (old) { r.group.remove(old); ((old as Sprite).material as SpriteMaterial).map?.dispose(); }
+    const c = document.createElement('canvas');
+    c.width = 256; c.height = 64;
+    const g = c.getContext('2d')!;
+    g.font = 'bold 34px sans-serif';
+    const w = Math.min(250, g.measureText(name).width + 24);
+    g.fillStyle = 'rgba(0,0,0,0.5)';
+    g.fillRect((256 - w) / 2, 8, w, 48);
+    g.fillStyle = '#fff';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.fillText(name, 128, 33);
+    const sprite = new Sprite(new SpriteMaterial({ map: new CanvasTexture(c), depthTest: false, transparent: true }));
+    sprite.name = 'pseudo';
+    sprite.scale.set(1.6, 0.4, 1);
+    sprite.position.y = 2.25;
+    r.group.add(sprite);
+  }
+
+  private removeRemote(id: number): void {
+    const r = this.remotes.get(id);
+    if (!r) return;
+    this.entityGroup.remove(r.group);
+    r.group.traverse((o) => {
+      if (o instanceof Mesh) o.geometry.dispose();
+      if (o instanceof Sprite) { o.material.map?.dispose(); o.material.dispose(); }
+    });
+    this.remotes.delete(id);
+  }
+
+  /** Envoie sa position, et fait glisser les avatars des autres vers la leur. */
+  private updateNet(dt: number, active: boolean): void {
+    const net = this.net;
+    if (net && this.netWelcomed) {
+      net.flush();
+      this.netPosTimer -= dt;
+      if (this.netPosTimer <= 0 && active && this.worldReady) {
+        this.netPosTimer = 0.1;
+        const p = this.player.position;
+        const key = `${p.x.toFixed(2)},${p.y.toFixed(2)},${p.z.toFixed(2)},${this.player.yaw.toFixed(2)},${this.dimension}`;
+        if (key !== this.lastSentPos) {
+          this.lastSentPos = key;
+          net.sendPos(p.x, p.y, p.z, this.player.yaw, this.player.pitch, this.dimension);
+        }
+      }
+    }
+    for (const r of this.remotes.values()) {
+      r.group.visible = r.seen && r.dimension === this.dimension;
+      if (!r.group.visible) continue;
+      const before = r.group.position.clone();
+      r.group.position.lerp(r.target, Math.min(1, 12 * dt));
+      // Même convention que le modèle du joueur : il regarde vers -Z.
+      r.group.rotation.y = r.yaw;
+      const moved = Math.hypot(r.group.position.x - before.x, r.group.position.z - before.z) / Math.max(dt, 1e-3);
+      r.phase += dt * Math.min(10, moved * 2.2);
+      const swing = Math.sin(r.phase) * Math.min(0.8, moved * 0.25);
+      if (r.limbs.length === 4) {
+        r.limbs[0].rotation.x = swing;
+        r.limbs[1].rotation.x = -swing;
+        r.limbs[2].rotation.x = -swing;
+        r.limbs[3].rotation.x = swing;
+      }
+    }
+  }
+
   // --- Gadgets : coin gamer et bases secrètes -----------------------------
 
   /** Clic droit sur un meuble ou un mécanisme. Vrai si l'appui a servi. */
@@ -3238,6 +3596,11 @@ export class Game {
     const cx = floorDiv(x, CHUNK_X);
     const cz = floorDiv(z, CHUNK_Z);
     this.save?.recordEdit(cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
+    // Partie partagée : tout bloc posé ou cassé ici part chez les autres. Seul
+    // l'Overworld est commun ; Nether et End restent propres à chacun.
+    if (this.net && this.netWelcomed && !this.applyingRemote && this.dimension === 'overworld') {
+      this.net.queueEdit(x, y, z, id);
+    }
   }
 
   private spawnDrop(x: number, y: number, z: number, s: ItemStack): void {
@@ -3949,6 +4312,13 @@ export class Game {
   private playerLimbs: Group[] = [];
 
   private buildPlayerModel(): Group {
+    const { group, limbs } = this.makeAvatar(0x3aa0c8);
+    this.playerLimbs = limbs;
+    return group;
+  }
+
+  /** Personnage en boîtes ; seule la couleur du maillot change d'un joueur à l'autre. */
+  private makeAvatar(shirt: number): { group: Group; limbs: Group[] } {
     const g = new Group();
     const mat = createEntityMaterial(this.env);
     const add = (w: number, h: number, d: number, color: number, x: number, y: number, z: number, pivotTop = false) => {
@@ -3961,14 +4331,13 @@ export class Game {
       return pivot;
     };
     add(0.5, 0.5, 0.5, 0xe0ac86, 0, 1.62, 0);
-    add(0.52, 0.74, 0.28, 0x3aa0c8, 0, 1.0, 0);
+    add(0.52, 0.74, 0.28, shirt, 0, 1.0, 0);
     const armL = add(0.22, 0.72, 0.22, 0xe0ac86, -0.37, 1.38, 0, true);
     const armR = add(0.22, 0.72, 0.22, 0xe0ac86, 0.37, 1.38, 0, true);
     const legL = add(0.24, 0.68, 0.24, 0x3b4a86, -0.13, 0.68, 0, true);
     const legR = add(0.24, 0.68, 0.24, 0x3b4a86, 0.13, 0.68, 0, true);
-    this.playerLimbs = [armL, armR, legL, legR];
     g.userData.material = mat;
-    return g;
+    return { group: g, limbs: [armL, armR, legL, legR] };
   }
 
   private updateHeldView(dt: number): void {

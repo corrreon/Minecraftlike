@@ -101,6 +101,29 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
 - **Trois types de monde** au choix à la création : normal, **superplat** pour
   bâtir sans terrain qui gêne, et **oneblock**.
 
+### Multijoueur
+
+- **Partie partagée sur invitation** : depuis la pause, *Multijoueur → Ouvrir la
+  partie* transforme le monde en partie en ligne et copie un **lien secret**.
+  Les amis l'ouvrent (ou passent par *Rejoindre une partie* au menu), donnent
+  un pseudo, et arrivent dans le même monde : même graine, mêmes
+  constructions.
+- **Synchronisé** : blocs posés et cassés dans l'Overworld, positions et
+  avatars des joueurs (avec leur pseudo), arrivées et départs, discussion
+  (`/dire bonjour` dans la console). Créatures, coffres, Nether et End restent
+  propres à chaque joueur pour l'instant.
+- **Le monde partagé vit sur le serveur** : il reste jouable quand l'hôte est
+  déconnecté, et chacun le retrouve dans sa liste de mondes, qui se reconnecte
+  toute seule à la partie.
+- **Sécurité** : code de partie de 132 bits impossible à deviner, mot de passe
+  facultatif (vérifié par le serveur, jamais stocké en clair), connexions
+  acceptées uniquement depuis la page du jeu, et contrôles côté serveur — bloc
+  modifié hors de portée, débit excessif, coordonnées absurdes : refusés.
+- **Hébergement gratuit** : un Durable Object Cloudflare par partie
+  (`server/`), mis en veille quand personne ne joue. Il est déployé par la même
+  action GitHub que le jeu, à condition que les secrets `CLOUDFLARE_API_TOKEN`
+  et `CLOUDFLARE_ACCOUNT_ID` soient définis dans le dépôt.
+
 ### Dimensions
 
 - **Nether** : une caverne close entre deux couches de bedrock, sculptée dans du

@@ -7,7 +7,7 @@
  * de kilo-octets.
  */
 
-import { chunkKey } from '../core/constants';
+import { CHUNK_X, CHUNK_Z, chunkKey } from '../core/constants';
 import type { Dimension } from '../world/generator';
 
 const DB_NAME = 'voxelcraft';
@@ -41,6 +41,15 @@ export interface WorldMeta {
   returnPos?: [number, number, number];
   /** Le dragon de l'End a déjà été vaincu : il ne réapparaît pas. */
   dragonSlain?: boolean;
+  /** Partie multijoueur ouverte depuis ce monde (hôte) ou rejointe (invité). */
+  mpRoom?: string;
+  /** Jeton d'hôte : permet de rouvrir la même partie avec le même lien. */
+  mpOwner?: string;
+  /** Monde d'invité : copie locale d'une partie rejointe. */
+  mpGuest?: boolean;
+  /** Pseudo et mot de passe utilisés pour cette partie. */
+  mpName?: string;
+  mpPass?: string;
 }
 
 /**
@@ -200,6 +209,35 @@ export class SaveManager {
 
   getEdits(cx: number, cz: number): Map<number, number> | undefined {
     return this.edits.get(this.dimKey(cx, cz));
+  }
+
+  /**
+   * Toutes les modifications de l'Overworld, en coordonnées du monde : c'est
+   * ce que l'hôte téléverse en ouvrant une partie multijoueur.
+   */
+  overworldEdits(): [number, number, number, number][] {
+    const out: [number, number, number, number][] = [];
+    for (const [key, map] of this.edits) {
+      if (key.includes('/')) continue; // Nether, End
+      const [cx, cz] = key.split(',').map(Number);
+      for (const [index, block] of map) {
+        const lx = index % CHUNK_X;
+        const lz = Math.floor(index / CHUNK_X) % CHUNK_Z;
+        const y = Math.floor(index / (CHUNK_X * CHUNK_Z));
+        out.push([cx * CHUNK_X + lx, y, cz * CHUNK_Z + lz, block]);
+      }
+    }
+    return out;
+  }
+
+  /** Comme `recordEdit`, mais pour l'Overworld quelle que soit la dimension courante. */
+  recordOverworldEdit(cx: number, cz: number, index: number, block: number): void {
+    const key = chunkKey(cx, cz);
+    let m = this.edits.get(key);
+    if (!m) { m = new Map(); this.edits.set(key, m); }
+    m.set(index, block);
+    this.dirtyKeys.add(key);
+    this.scheduleFlush();
   }
 
   /** Enregistre une modification unitaire (appelé à chaque bloc posé/cassé). */
