@@ -266,6 +266,12 @@ export class AudioEngine {
     this.voice(494, 0.35, 'square', 0.1, 0.99);
   }
 
+  /** Sonnette de vélo : deux « dring » aigus. */
+  bell(): void {
+    this.voice(2100, 0.18, 'sine', 0.14, 0.98);
+    setTimeout(() => this.voice(2100, 0.22, 'sine', 0.14, 0.98), 140);
+  }
+
   /** Petite ritournelle de démarrage de console. */
   chime(): void {
     [988, 1319, 1568].forEach((f, i) => setTimeout(() => this.voice(f, 0.14, 'square', 0.1, 1), i * 80));

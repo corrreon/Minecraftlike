@@ -421,8 +421,20 @@ item('airbus', { name: 'Airbus', maxStack: 1, color: 0xf2f2f4, icon: 'vehicle' }
 // Œuf d'apparition : il fait naître la créature là où l'on vise.
 item('mutant_zombie_spawn_egg', { name: 'Œuf d’apparition de zombie mutant', maxStack: 16, color: 0x3e6e30, icon: 'ammo' });
 
+// Bateaux, deux-roues, trottinette et quad.
+item('rowboat', { name: 'Barque', maxStack: 1, color: 0x8a5a30, icon: 'vehicle' });
+item('speedboat', { name: 'Hors-bord', maxStack: 1, color: 0xf2f2f4, icon: 'vehicle' });
+item('motorbike', { name: 'Moto', maxStack: 1, color: 0xd02a2a, icon: 'vehicle' });
+item('bicycle', { name: 'Vélo', maxStack: 1, color: 0x2a6ad0, icon: 'vehicle' });
+item('tandem', { name: 'Tandem', maxStack: 1, color: 0x2aa04a, icon: 'vehicle' });
+item('scooter', { name: 'Trottinette', maxStack: 1, color: 0xd02a2a, icon: 'vehicle' });
+item('quad', { name: 'Quad', maxStack: 1, color: 0xe07a1a, icon: 'vehicle' });
+
 /** Objets qui font apparaître un engin piloté. */
-export const VEHICLE_ITEMS = new Set(['plane', 'tank', 'lamborghini', 'tesla', 'porsche', 'fighter_jet', 'helicopter', 'airbus']);
+export const VEHICLE_ITEMS = new Set([
+  'plane', 'tank', 'lamborghini', 'tesla', 'porsche', 'fighter_jet', 'helicopter', 'airbus',
+  'rowboat', 'speedboat', 'motorbike', 'bicycle', 'tandem', 'scooter', 'quad',
+]);
 
 export function itemById(id: number): ItemDef {
   return ITEMS[id] ?? ITEMS[0];

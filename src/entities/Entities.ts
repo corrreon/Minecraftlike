@@ -32,7 +32,9 @@ export type MobKind =
   | 'villager' | 'village_idiot' | 'iron_golem' | 'kraken' | 'bloop'
   | 'blaze' | 'enderman' | 'ender_dragon' | 'piglin'
   | 'plane' | 'tank' | 'lamborghini' | 'tesla' | 'porsche'
-  | 'fighter_jet' | 'helicopter' | 'airbus' | 'mutant_zombie';
+  | 'fighter_jet' | 'helicopter' | 'airbus' | 'mutant_zombie'
+  | 'rowboat' | 'speedboat' | 'motorbike' | 'bicycle' | 'tandem' | 'scooter' | 'quad'
+  | 'dog' | 'cat';
 
 interface MobPart {
   name: string;
@@ -73,6 +75,8 @@ interface MobTraits {
   flight?: FlightSpec;
   /** Nombre de places : le pilote, plus des passagers. */
   seats?: number;
+  /** Animal de compagnie : on l'apprivoise avec cette friandise. */
+  treat?: string;
   /** Engin (avion, voiture, tank) : ni IA, ni errance, ni disparition au loin. */
   machine?: boolean;
   /**
@@ -113,6 +117,10 @@ export interface VehicleSpec {
   tracks?: boolean;
   /** Canon en tourelle, orienté par le regard du pilote. */
   cannon?: boolean;
+  /** Bateau : il flotte et file sur l'eau, mais se traîne sur la terre ferme. */
+  boat?: boolean;
+  /** Deux-roues et trottinette : une sonnette plutôt qu'un klaxon. */
+  bell?: boolean;
   /** Hauteur des yeux du pilote au-dessus du plancher, en fraction de hauteur. */
   seat: number;
 }
@@ -654,6 +662,144 @@ export const MOBS: Record<MobKind, MobDef> = {
       { name: 'legR', size: [0.55, 1.15, 0.55], offset: [0.4, 0.58, 0], color: 0x2a3a6a, anim: 'legFR' },
     ],
     { knockback: 11 }),
+
+  // --- Bateaux, deux-roues, quad -----------------------------------------------
+  rowboat: M('Barque', false, 30, 0, 1.4, 0.7, 0, 0, 0, [],
+    [
+      { name: 'fond', size: [1.3, 0.15, 2.6], offset: [0, 0.1, 0], color: 0x8a5a30 },
+      { name: 'bordL', size: [0.12, 0.45, 2.6], offset: [-0.6, 0.35, 0], color: 0x9a6a3a },
+      { name: 'bordR', size: [0.12, 0.45, 2.6], offset: [0.6, 0.35, 0], color: 0x9a6a3a },
+      { name: 'proue', size: [1.3, 0.45, 0.12], offset: [0, 0.35, -1.25], color: 0x9a6a3a },
+      { name: 'poupe', size: [1.3, 0.45, 0.12], offset: [0, 0.35, 1.25], color: 0x9a6a3a },
+      { name: 'banc1', size: [1.1, 0.08, 0.3], offset: [0, 0.4, -0.4], color: 0xb07a44 },
+      { name: 'banc2', size: [1.1, 0.08, 0.3], offset: [0, 0.4, 0.5], color: 0xb07a44 },
+      { name: 'rameL', size: [0.08, 0.08, 1.6], offset: [-0.8, 0.5, 0], color: 0x6a4a2a },
+      { name: 'rameR', size: [0.08, 0.08, 1.6], offset: [0.8, 0.5, 0], color: 0x6a4a2a },
+    ],
+    { rideable: true, machine: true, seats: 2, vehicle: { max: 6, reverse: 2, accel: 4, brake: 6, drag: 1.5, turn: 1.8, boat: true, seat: 0.3 } }),
+
+  speedboat: M('Hors-bord', false, 50, 0, 1.8, 1.0, 0, 0, 0, [],
+    [
+      { name: 'coque', size: [1.7, 0.5, 4.0], offset: [0, 0.3, 0], color: 0xf2f2f4 },
+      { name: 'etrave', size: [1.3, 0.4, 0.9], offset: [0, 0.35, -2.3], color: 0xf2f2f4 },
+      { name: 'liseré', size: [1.74, 0.12, 4.0], offset: [0, 0.45, 0], color: 0xd02a2a },
+      { name: 'pont', size: [1.5, 0.06, 1.6], offset: [0, 0.58, -1.0], color: 0xe0d6c0 },
+      { name: 'parebrise', size: [1.5, 0.4, 0.08], offset: [0, 0.78, -0.4], color: 0x5a8aaa },
+      { name: 'siege', size: [1.2, 0.3, 0.6], offset: [0, 0.65, 0.5], color: 0x2a3a5a },
+      { name: 'moteur', size: [0.5, 0.7, 0.4], offset: [0, 0.55, 2.15], color: 0x1c1c20 },
+    ],
+    { rideable: true, machine: true, seats: 4, vehicle: { max: 22, reverse: 4, accel: 10, brake: 10, drag: 2, turn: 1.6, boat: true, seat: 0.4 } }),
+
+  motorbike: M('Moto', false, 30, 0, 0.9, 1.2, 0, 0, 0, [],
+    [
+      { name: 'cadre', size: [0.36, 0.36, 1.3], offset: [0, 0.72, 0], color: 0xd02a2a },
+      { name: 'reservoir', size: [0.46, 0.26, 0.5], offset: [0, 0.98, -0.2], color: 0xe03a3a },
+      { name: 'selle', size: [0.36, 0.12, 0.6], offset: [0, 0.98, 0.35], color: 0x1c1c20 },
+      { name: 'fourche', size: [0.08, 0.6, 0.08], offset: [0, 0.68, -0.72], color: 0xb0b0b8 },
+      { name: 'guidon', size: [0.72, 0.06, 0.06], offset: [0, 1.12, -0.62], color: 0x1c1c20 },
+      { name: 'phare', size: [0.2, 0.18, 0.06], offset: [0, 0.95, -0.8], color: 0xfff6c0 },
+      { name: 'pot', size: [0.1, 0.1, 0.6], offset: [0.24, 0.4, 0.45], color: 0xb0b0b8 },
+      { name: 'roueAv', size: [0.15, 0.62, 0.62], offset: [0, 0.31, -0.75], color: 0x141414, anim: 'wheel' },
+      { name: 'roueAr', size: [0.17, 0.62, 0.62], offset: [0, 0.31, 0.75], color: 0x141414, anim: 'wheel' },
+    ],
+    { rideable: true, machine: true, seats: 2, vehicle: { max: 26, reverse: 3, accel: 14, brake: 22, drag: 3, turn: 2.4, seat: 0.5 } }),
+
+  bicycle: M('Vélo', false, 20, 0, 0.8, 1.1, 0, 0, 0, [],
+    [
+      { name: 'tube', size: [0.06, 0.06, 1.0], offset: [0, 0.68, 0], color: 0x2a6ad0 },
+      { name: 'diagonale', size: [0.06, 0.5, 0.06], offset: [0, 0.45, -0.1], color: 0x2a6ad0 },
+      { name: 'potence', size: [0.06, 0.5, 0.06], offset: [0, 0.75, -0.5], color: 0x2a6ad0 },
+      { name: 'selle', size: [0.18, 0.06, 0.3], offset: [0, 0.98, 0.3], color: 0x1c1c20 },
+      { name: 'guidon', size: [0.5, 0.05, 0.05], offset: [0, 1.0, -0.5], color: 0x1c1c20 },
+      { name: 'roueAv', size: [0.06, 0.66, 0.66], offset: [0, 0.33, -0.55], color: 0x2a2a2e, anim: 'wheel' },
+      { name: 'roueAr', size: [0.06, 0.66, 0.66], offset: [0, 0.33, 0.55], color: 0x2a2a2e, anim: 'wheel' },
+    ],
+    { rideable: true, machine: true, seats: 1, vehicle: { max: 9, reverse: 2, accel: 6, brake: 12, drag: 2, turn: 2.6, bell: true, seat: 0.6 } }),
+
+  tandem: M('Tandem', false, 24, 0, 0.8, 1.1, 0, 0, 0, [],
+    [
+      { name: 'tube', size: [0.06, 0.06, 1.9], offset: [0, 0.68, 0], color: 0x2aa04a },
+      { name: 'diagonale1', size: [0.06, 0.5, 0.06], offset: [0, 0.45, -0.45], color: 0x2aa04a },
+      { name: 'diagonale2', size: [0.06, 0.5, 0.06], offset: [0, 0.45, 0.45], color: 0x2aa04a },
+      { name: 'potence', size: [0.06, 0.5, 0.06], offset: [0, 0.75, -0.95], color: 0x2aa04a },
+      { name: 'selle1', size: [0.18, 0.06, 0.3], offset: [0, 0.98, -0.25], color: 0x1c1c20 },
+      { name: 'selle2', size: [0.18, 0.06, 0.3], offset: [0, 0.98, 0.65], color: 0x1c1c20 },
+      { name: 'guidon1', size: [0.5, 0.05, 0.05], offset: [0, 1.0, -0.95], color: 0x1c1c20 },
+      { name: 'guidon2', size: [0.4, 0.05, 0.05], offset: [0, 1.0, 0.35], color: 0x1c1c20 },
+      { name: 'roueAv', size: [0.06, 0.66, 0.66], offset: [0, 0.33, -1.0], color: 0x2a2a2e, anim: 'wheel' },
+      { name: 'roueAr', size: [0.06, 0.66, 0.66], offset: [0, 0.33, 1.0], color: 0x2a2a2e, anim: 'wheel' },
+    ],
+    { rideable: true, machine: true, seats: 2, vehicle: { max: 11, reverse: 2, accel: 6, brake: 12, drag: 2, turn: 2.0, bell: true, seat: 0.6 } }),
+
+  scooter: M('Trottinette', false, 15, 0, 0.6, 1.2, 0, 0, 0, [],
+    [
+      { name: 'plateau', size: [0.25, 0.06, 0.9], offset: [0, 0.16, 0], color: 0x1c1c20 },
+      { name: 'colonne', size: [0.06, 1.0, 0.06], offset: [0, 0.66, -0.45], color: 0xd02a2a },
+      { name: 'guidon', size: [0.5, 0.05, 0.05], offset: [0, 1.16, -0.45], color: 0x1c1c20 },
+      { name: 'garde', size: [0.2, 0.06, 0.2], offset: [0, 0.26, 0.48], color: 0xd02a2a },
+      { name: 'roueAv', size: [0.06, 0.22, 0.22], offset: [0, 0.11, -0.45], color: 0x2a2a2e, anim: 'wheel' },
+      { name: 'roueAr', size: [0.06, 0.22, 0.22], offset: [0, 0.11, 0.45], color: 0x2a2a2e, anim: 'wheel' },
+    ],
+    { rideable: true, machine: true, seats: 1, vehicle: { max: 7, reverse: 1.5, accel: 5, brake: 10, drag: 2.5, turn: 3.0, bell: true, seat: 0.8 } }),
+
+  quad: M('Quad', false, 40, 0, 1.3, 1.0, 0, 0, 0, [],
+    [
+      { name: 'caisse', size: [1.0, 0.4, 1.6], offset: [0, 0.62, 0], color: 0xe07a1a },
+      { name: 'selle', size: [0.5, 0.15, 0.8], offset: [0, 0.9, 0.2], color: 0x1c1c20 },
+      { name: 'guidon', size: [0.9, 0.06, 0.06], offset: [0, 1.1, -0.55], color: 0x1c1c20 },
+      { name: 'colonne', size: [0.08, 0.3, 0.08], offset: [0, 0.95, -0.55], color: 0x3a3a40 },
+      { name: 'galerieAv', size: [1.0, 0.06, 0.4], offset: [0, 0.88, -0.75], color: 0x3a3a40 },
+      { name: 'galerieAr', size: [1.0, 0.06, 0.4], offset: [0, 0.88, 0.75], color: 0x3a3a40 },
+      { name: 'phare', size: [0.5, 0.12, 0.05], offset: [0, 0.7, -0.81], color: 0xfff6c0 },
+      ...[-0.6, 0.6].flatMap((z): MobPart[] => [
+        { name: 'roue', size: [0.35, 0.55, 0.55], offset: [-0.62, 0.28, z], color: 0x141414, anim: 'wheel' },
+        { name: 'roue', size: [0.35, 0.55, 0.55], offset: [0.62, 0.28, z], color: 0x141414, anim: 'wheel' },
+      ]),
+    ],
+    { rideable: true, machine: true, seats: 2, vehicle: { max: 18, reverse: 5, accel: 10, brake: 20, drag: 3, turn: 2.4, seat: 0.5 } }),
+
+  // --- Animaux de compagnie ---------------------------------------------------
+  // On les apprivoise avec leur friandise ; ils suivent alors leur maître, et
+  // s'assoient sur ordre. Le chien défend son maître contre les monstres.
+  dog: M('Chien', false, 16, 3.2, 0.6, 0.85, 4, 12, 1, [],
+    [
+      { name: 'body', size: [0.4, 0.4, 0.9], offset: [0, 0.55, 0], color: 0xa86b3a },
+      { name: 'poitrail', size: [0.42, 0.3, 0.3], offset: [0, 0.52, -0.38], color: 0xe8d8c0 },
+      { name: 'head', size: [0.42, 0.38, 0.4], offset: [0, 0.78, -0.62], color: 0xa86b3a, anim: 'head' },
+      { name: 'museau', size: [0.2, 0.16, 0.2], offset: [0, 0.7, -0.9], color: 0xc89060, anim: 'head' },
+      { name: 'truffe', size: [0.08, 0.06, 0.04], offset: [0, 0.76, -1.0], color: 0x1c1c20, anim: 'head' },
+      { name: 'eyeL', size: [0.07, 0.07, 0.04], offset: [-0.11, 0.86, -0.83], color: 0x1c1c20, anim: 'head' },
+      { name: 'eyeR', size: [0.07, 0.07, 0.04], offset: [0.11, 0.86, -0.83], color: 0x1c1c20, anim: 'head' },
+      { name: 'oreilleL', size: [0.1, 0.16, 0.08], offset: [-0.16, 1.0, -0.6], color: 0x7a4a24, anim: 'head' },
+      { name: 'oreilleR', size: [0.1, 0.16, 0.08], offset: [0.16, 1.0, -0.6], color: 0x7a4a24, anim: 'head' },
+      { name: 'collier', size: [0.44, 0.08, 0.42], offset: [0, 0.66, -0.42], color: 0xd02a2a },
+      { name: 'queue', size: [0.08, 0.08, 0.4], offset: [0, 0.75, 0.62], color: 0xa86b3a, anim: 'tail' },
+      { name: 'l1', size: [0.13, 0.36, 0.13], offset: [-0.13, 0.18, -0.32], color: 0x9a5e30, anim: 'legFL' },
+      { name: 'l2', size: [0.13, 0.36, 0.13], offset: [0.13, 0.18, -0.32], color: 0x9a5e30, anim: 'legFR' },
+      { name: 'l3', size: [0.13, 0.36, 0.13], offset: [-0.13, 0.18, 0.32], color: 0x9a5e30, anim: 'legBL' },
+      { name: 'l4', size: [0.13, 0.36, 0.13], offset: [0.13, 0.18, 0.32], color: 0x9a5e30, anim: 'legBR' },
+    ],
+    { treat: 'bone' }),
+
+  cat: M('Chat', false, 10, 3.4, 0.5, 0.6, 2, 0, 1, [],
+    [
+      { name: 'body', size: [0.3, 0.3, 0.72], offset: [0, 0.4, 0], color: 0xe0973a },
+      { name: 'raie1', size: [0.32, 0.06, 0.1], offset: [0, 0.56, -0.15], color: 0xb06a20 },
+      { name: 'raie2', size: [0.32, 0.06, 0.1], offset: [0, 0.56, 0.12], color: 0xb06a20 },
+      { name: 'head', size: [0.34, 0.3, 0.3], offset: [0, 0.6, -0.48], color: 0xe0973a, anim: 'head' },
+      { name: 'oreilleL', size: [0.08, 0.12, 0.06], offset: [-0.1, 0.8, -0.48], color: 0xb06a20, anim: 'head' },
+      { name: 'oreilleR', size: [0.08, 0.12, 0.06], offset: [0.1, 0.8, -0.48], color: 0xb06a20, anim: 'head' },
+      { name: 'eyeL', size: [0.07, 0.06, 0.04], offset: [-0.08, 0.64, -0.64], color: 0x3ac850, anim: 'head' },
+      { name: 'eyeR', size: [0.07, 0.06, 0.04], offset: [0.08, 0.64, -0.64], color: 0x3ac850, anim: 'head' },
+      { name: 'nez', size: [0.05, 0.04, 0.04], offset: [0, 0.56, -0.64], color: 0xe08aa0, anim: 'head' },
+      { name: 'collier', size: [0.32, 0.06, 0.3], offset: [0, 0.5, -0.36], color: 0x2a6ad0 },
+      { name: 'queue', size: [0.07, 0.07, 0.55], offset: [0, 0.55, 0.6], color: 0xe0973a, anim: 'tail' },
+      { name: 'l1', size: [0.09, 0.26, 0.09], offset: [-0.09, 0.13, -0.26], color: 0xd08a30, anim: 'legFL' },
+      { name: 'l2', size: [0.09, 0.26, 0.09], offset: [0.09, 0.13, -0.26], color: 0xd08a30, anim: 'legFR' },
+      { name: 'l3', size: [0.09, 0.26, 0.09], offset: [-0.09, 0.13, 0.26], color: 0xd08a30, anim: 'legBL' },
+      { name: 'l4', size: [0.09, 0.26, 0.09], offset: [0.09, 0.13, 0.26], color: 0xd08a30, anim: 'legBR' },
+    ],
+    { treat: 'chicken' }),
 };
 
 // --- Modèle de vol ---------------------------------------------------------
@@ -768,6 +914,10 @@ export class Mob {
   lastSnapAge = 0;
   /** Sa disparition a déjà été annoncée (ou ne doit pas l'être). */
   goneSent = false;
+  /** Animal de compagnie apprivoisé : il suit son maître. */
+  tamed = false;
+  /** Assis sur ordre : il ne bouge plus. */
+  sitting = false;
   private target = new Vector3();
   private targetYaw = 0;
   private targetPitch = 0;
@@ -834,7 +984,8 @@ export class Mob {
 
     const d = this.def;
     // Un gardien vise sa menace ; tout le monde vise le joueur.
-    const guarding = d.guard === true && this.threat !== null && !this.threat.dead;
+    // Le chien apprivoisé défend son maître, comme le golem son village.
+    const guarding = (d.guard === true || (this.tamed && this.kind === 'dog' && !this.sitting)) && this.threat !== null && !this.threat.dead;
     const focus = guarding ? this.threat!.position : playerPos;
     const toPlayer = tmpVec.copy(focus).sub(this.position);
     const dist = toPlayer.length();
@@ -915,6 +1066,21 @@ export class Mob {
           t.velocity.y += k * 0.45;
         } else {
           onDamagePlayer(d.damage);
+        }
+      }
+    } else if (this.tamed) {
+      // Animal de compagnie : assis, il attend ; sinon il suit son maître, et
+      // le rejoint d'un bond s'il s'est trop éloigné.
+      if (!this.sitting) {
+        const tx = playerPos.x - this.position.x, tz = playerPos.z - this.position.z;
+        const dd = Math.hypot(tx, tz);
+        if (dd > 18) {
+          this.position.set(playerPos.x + 1, playerPos.y + 0.2, playerPos.z);
+          this.velocity.set(0, 0, 0);
+        } else if (dd > 2.6) {
+          wishX = tx / dd;
+          wishZ = tz / dd;
+          this.yaw = Math.atan2(wishX, wishZ);
         }
       }
     } else if (this.leashPost || this.leashed) {
@@ -1207,8 +1373,15 @@ export class Mob {
     speed = clampNum(speed, -v.reverse, v.max);
 
     this.inWater = isLiquid(world, this.position.x, this.position.y + 0.3, this.position.z);
-    // Dans l'eau, ça patine : on avance au pas.
-    if (this.inWater) speed = clampNum(speed, -2, 3);
+    // Un bateau flotte : sous la ligne de flottaison il remonte, posé sur
+    // l'eau il y reste. Sur la terre ferme, il se traîne.
+    const afloat = v.boat === true && (this.inWater || isLiquid(world, this.position.x, this.position.y - 0.08, this.position.z));
+    if (v.boat) {
+      if (!afloat) speed = clampNum(speed, -1, 1.5);
+    } else if (this.inWater) {
+      // Dans l'eau, ça patine : on avance au pas.
+      speed = clampNum(speed, -2, 3);
+    }
 
     // Le braquage s'inverse en marche arrière, comme au volant.
     const grip = v.tracks ? 1 : clampNum(speed / 5, -1, 1);
@@ -1216,7 +1389,11 @@ export class Mob {
 
     this.velocity.x = Math.sin(this.yaw) * speed;
     this.velocity.z = Math.cos(this.yaw) * speed;
-    if (this.inWater) {
+    if (v.boat && this.inWater) {
+      this.velocity.y = Math.min(2.5, this.velocity.y + 18 * dt);
+    } else if (afloat) {
+      this.velocity.y = Math.max(0, this.velocity.y) * 0.5;
+    } else if (this.inWater) {
       this.velocity.y += (-1 - this.velocity.y) * Math.min(1, 3 * dt);
     } else {
       this.velocity.y -= GRAVITY * dt;
@@ -1295,6 +1472,12 @@ export class Mob {
 
   private animate(planar: number): void {
     const d = this.def;
+    if (d.treat) {
+      // Collier visible une fois apprivoisé ; assis, l'arrière-train se pose.
+      for (const p of this.parts) if (p.name === 'collier') p.mesh.visible = this.tamed;
+      this.group.rotation.x = this.sitting ? -0.35 : 0;
+      if (this.sitting) planar = 0;
+    }
     // Une masse gélatineuse s'écrase à l'atterrissage et s'étire en l'air.
     if (d.hops) {
       const squash = this.onGround ? 1 - Math.min(0.3, Math.max(0, this.hopTimer) * 0.4) : 1 + Math.min(0.28, Math.abs(this.velocity.y) * 0.03);
@@ -1449,7 +1632,7 @@ export class Mob {
   /** État à publier pour les autres joueurs. */
   snapshot(): Snap {
     const f = (this.burning > 0 ? 1 : 0) | (this.shorn ? 2 : 0) | (this.ridden ? 4 : 0)
-      | (this.hurtFlash > 0.5 ? 8 : 0) | (this.fuse >= 0 ? 16 : 0);
+      | (this.hurtFlash > 0.5 ? 8 : 0) | (this.fuse >= 0 ? 16 : 0) | (this.tamed ? 32 : 0) | (this.sitting ? 64 : 0);
     const r2 = (v: number) => Math.round(v * 100) / 100;
     const s: Snap = {
       u: this.uid, k: this.kind, d: this.dimension,
@@ -1477,6 +1660,8 @@ export class Mob {
     this.ridden = (f & 4) !== 0;
     if (f & 8) this.hurtFlash = Math.max(this.hurtFlash, 0.8);
     this.fuse = f & 16 ? Math.max(0, this.fuse) : -1;
+    this.tamed = (f & 32) !== 0;
+    this.sitting = (f & 64) !== 0;
     if (s.a !== undefined) this.airspeed = s.a;
     if (s.ty !== undefined) this.targetTurret = s.ty;
     if (s.p !== undefined) this.targetPitch = s.p;

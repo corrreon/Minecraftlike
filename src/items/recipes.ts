@@ -247,6 +247,15 @@ RECIPES.push(shaped(['III', ' G ', 'IYI'], { I: 'iron_ingot', G: 'glass', Y: 'ye
 RECIPES.push(shaped(['GGG', 'IBI', 'III'], { G: 'glass', I: 'iron_block', B: 'blue_wool' }, 'airbus'));
 RECIPES.push(shaped(['RRR', 'RDR', 'RRR'], { R: 'rotten_flesh', D: 'diamond' }, 'mutant_zombie_spawn_egg'));
 
+// --- Bateaux, deux-roues, quad ------------------------------------------------
+RECIPES.push(shaped(['P P', 'PPP'], { P: PLANKS }, 'rowboat'));
+RECIPES.push(shaped(['G  ', 'WWW', 'III'], { G: 'glass', W: 'white_wool', I: 'iron_ingot' }, 'speedboat'));
+RECIPES.push(shaped([' I ', 'IRI', 'C C'], { I: 'iron_ingot', R: 'red_wool', C: 'coal_block' }, 'motorbike'));
+RECIPES.push(shaped([' S ', 'III', 'C C'], { S: 'stick', I: 'iron_ingot', C: 'coal' }, 'bicycle'));
+RECIPES.push(shaped(['S S', 'III', 'C C'], { S: 'stick', I: 'iron_ingot', C: 'coal' }, 'tandem'));
+RECIPES.push(shaped(['I  ', 'I  ', 'III'], { I: 'iron_ingot' }, 'scooter'));
+RECIPES.push(shaped(['IOI', 'III', 'CCC'], { I: 'iron_ingot', O: 'orange_wool', C: 'coal_block' }, 'quad'));
+
 // --- Seaux -----------------------------------------------------------------
 RECIPES.push(shaped(['I I', ' I '], { I: 'iron_ingot' }, 'bucket'));
 

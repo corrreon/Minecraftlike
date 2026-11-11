@@ -70,6 +70,9 @@ export interface EntitySave {
   airspeed?: number;
   /** Bloc auquel la bête est attachée par une laisse. */
   post?: [number, number, number];
+  /** Animal de compagnie apprivoisé, et assis. */
+  tamed?: boolean;
+  sitting?: boolean;
 }
 
 export interface PlayerSave {

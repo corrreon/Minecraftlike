@@ -278,6 +278,40 @@ function gearIcon(def: ItemDef): string {
       rect(put, 5, 12, 6, 2, c, 0.85);
       for (const [x, y] of [[5, 5], [9, 6], [6, 9], [10, 10], [7, 3]] as const) rect(put, x, y, 2, 1, 0x1b2a14);
       break;
+    case 'rowboat':
+    case 'speedboat':
+      rect(put, 1, 8, 14, 3, c);
+      rect(put, 2, 11, 12, 2, c, 0.8);
+      rect(put, 0, 7, 2, 2, c, 0.9);
+      if (def.key === 'speedboat') { rect(put, 6, 5, 4, 3, 0x5a8aaa); rect(put, 1, 9, 14, 1, 0xd02a2a); }
+      else { rect(put, 3, 6, 1, 6, 0x6a4a2a); rect(put, 12, 6, 1, 6, 0x6a4a2a); }
+      break;
+    case 'motorbike':
+    case 'bicycle':
+    case 'tandem':
+    case 'scooter': {
+      const big = def.key === 'scooter' ? 2 : 4;
+      const x2 = def.key === 'tandem' ? 12 : 11;
+      rect(put, 1, 14 - big, big, big, 0x2a2a2e);
+      rect(put, x2, 14 - big, big, big, 0x2a2a2e);
+      if (def.key === 'scooter') { rect(put, 2, 12, 11, 1, c); rect(put, 3, 3, 1, 9, c); rect(put, 1, 3, 4, 1, 0x1c1c20); }
+      else {
+        rect(put, 3, 8, x2 - 2, 2, c);
+        rect(put, 3, 5, 1, 4, c);
+        rect(put, 1, 4, 4, 1, 0x1c1c20);
+        rect(put, 9, 6, 3, 1, 0x1c1c20);
+        if (def.key === 'tandem') rect(put, 6, 6, 3, 1, 0x1c1c20);
+        if (def.key === 'motorbike') rect(put, 5, 6, 5, 3, c, 1.15);
+      }
+      break;
+    }
+    case 'quad':
+      rect(put, 2, 6, 12, 4, c);
+      rect(put, 5, 4, 5, 2, 0x1c1c20);
+      rect(put, 1, 10, 4, 4, 0x141414);
+      rect(put, 11, 10, 4, 4, 0x141414);
+      rect(put, 2, 3, 3, 1, 0x1c1c20);
+      break;
     case 'tank':
       rect(put, 1, 9, 14, 4, 0x2a2a26);
       rect(put, 2, 7, 12, 3, c);

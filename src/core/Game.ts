@@ -106,7 +106,10 @@ const AIR_SEAT: Record<string, [number, number]> = {
 /** Sensibilité du manche de pilotage, en radians par seconde à fond de course. */
 const PLANE_STICK = 1.1;
 /** Hauteur des yeux du pilote au-dessus du plancher de chaque véhicule. */
-const VEHICLE_EYE: Record<string, number> = { tank: 2.05, lamborghini: 1.0, tesla: 1.2, porsche: 1.1 };
+const VEHICLE_EYE: Record<string, number> = {
+  tank: 2.05, lamborghini: 1.0, tesla: 1.2, porsche: 1.1,
+  rowboat: 1.25, speedboat: 1.4, motorbike: 1.65, bicycle: 1.7, tandem: 1.7, scooter: 1.85, quad: 1.65,
+};
 /** Cadence du canon de tank, en secondes. */
 const CANNON_COOLDOWN = 1.6;
 /** En dessous de cette vitesse, s'accroupir fait descendre ; au-dessus, ça freine. */
@@ -187,7 +190,7 @@ export class Game {
   /** Notre identifiant dans la partie (attribué par le serveur). */
   private myNetId = 0;
   /** Créature demandée au serveur avant de la monter ou de la tenir en laisse. */
-  private pendingClaim: { uid: string; action: 'mount' | 'leash'; at: number } | null = null;
+  private pendingClaim: { uid: string; action: 'mount' | 'leash' | 'tame' | 'sit'; at: number } | null = null;
   private entSendTimer = 0;
   private applyingRemote = false;
   private remotes = new Map<number, RemoteAvatar>();
@@ -2179,6 +2182,24 @@ export class Game {
       return;
     }
 
+    // Chiens et chats : la friandise les apprivoise, un clic droit les fait
+    // s'asseoir ou se relever.
+    {
+      const eye = this.player.eyePosition.clone();
+      const dir = this.player.forward.clone().normalize();
+      const pet = this.pickMob(eye, dir, REACH_SURVIVAL);
+      if (pet?.def.treat && (!hit || pet.position.distanceTo(eye) < hit.distance + 0.5)) {
+        this.useLocked = true;
+        const action = !pet.tamed && stackHeld?.item.key === pet.def.treat ? 'tame' : pet.tamed ? 'sit' : null;
+        if (action) {
+          if (pet.puppet) { this.claimMob(pet, action); return; }
+          if (action === 'tame') this.tryTame(pet);
+          else this.toggleSit(pet);
+          return;
+        }
+      }
+    }
+
     if (!stackHeld) return;
     const item = stackHeld.item;
 
@@ -2498,7 +2519,7 @@ export class Game {
     // S'accroupir freine ; à l'arrêt, on descend.
     m.driveBrake = st.sneak;
     if (st.sneak && Math.abs(m.airspeed) < VEHICLE_EXIT_SPEED) { this.dismount(); return; }
-    if (st.jump && !this.hornLocked && !v.cannon) { this.hornLocked = true; this.audio.horn(); }
+    if (st.jump && !this.hornLocked && !v.cannon) { this.hornLocked = true; if (v.bell) this.audio.bell(); else this.audio.horn(); }
     if (!st.jump) this.hornLocked = false;
 
     m.setInterior(this.player.cameraMode === 0);
@@ -2930,6 +2951,8 @@ export class Game {
         this.pendingClaim = null;
         if (c.action === 'mount' && m.def.rideable && !this.mount) this.mountMob(m);
         else if (c.action === 'leash') { m.leashed = true; m.leashPost = null; this.hud.toast('Au bout de la laisse.'); }
+        else if (c.action === 'tame') this.tryTame(m);
+        else if (c.action === 'sit') this.toggleSit(m);
       }
     }
   }
@@ -3033,7 +3056,7 @@ export class Game {
   }
 
   /** Demande la créature d'un autre joueur au serveur avant d'agir dessus. */
-  private claimMob(m: Mob, action: 'mount' | 'leash'): void {
+  private claimMob(m: Mob, action: 'mount' | 'leash' | 'tame' | 'sit'): void {
     if (!this.net) return;
     if (m.ridden) { this.hud.toast('Quelqu’un est déjà dessus.', 'warn'); return; }
     this.pendingClaim = { uid: m.uid, action, at: this.elapsed };
@@ -3252,6 +3275,36 @@ export class Game {
     return false;
   }
 
+  /** Une chance sur trois par friandise : l'animal devient le nôtre. */
+  private tryTame(m: Mob): void {
+    if (m.tamed) return;
+    const held = this.inventory.selectedStack;
+    if (held?.item.key !== m.def.treat) return;
+    if (this.player.mode !== GameMode.Creative) this.inventory.main.consume(this.inventory.selected);
+    this.heldView.swing = 1;
+    if (this.player.mode === GameMode.Creative || Math.random() < 1 / 3) {
+      m.tamed = true;
+      m.sitting = false;
+      m.leashed = false;
+      m.health = m.def.health;
+      this.audio.levelUp();
+      if (this.settings.particles) this.particles.puff(m.position.x, m.position.y + m.def.height, m.position.z, 0xff4a6a, 8);
+      this.hud.toast(m.kind === 'dog' ? 'Le chien t’adopte ! Clic droit : assis / debout.' : 'Le chat t’adopte ! Clic droit : assis / debout.');
+    } else {
+      this.audio.eat();
+      if (this.settings.particles) this.particles.puff(m.position.x, m.position.y + m.def.height, m.position.z, 0x808080, 4);
+      this.hud.toast('Il hésite… encore une friandise ?', 'info', 1800);
+    }
+  }
+
+  private toggleSit(m: Mob): void {
+    if (!m.tamed) return;
+    m.sitting = !m.sitting;
+    m.velocity.set(0, 0, 0);
+    this.audio.click();
+    this.hud.toast(m.sitting ? `${m.def.name} : assis !` : `${m.def.name} : au pied !`, 'info', 1500);
+  }
+
   private boardAsPassenger(m: Mob): void {
     if (this.mount || this.seat) return;
     this.passengerOf = m;
@@ -3283,8 +3336,10 @@ export class Game {
       // Voiture, tank : à côté ou derrière le conducteur.
       const fx = Math.sin(m.yaw), fz = Math.cos(m.yaw);
       const rx = -fz, rz = fx;
-      const side = i % 2 === 1 ? 0.45 : -0.45;
-      const behind = i >= 2 ? 0.9 : 0;
+      // Deux-roues : le passager s'assoit derrière, dans l'axe.
+      const narrow = m.def.width < 1;
+      const side = narrow ? 0 : i % 2 === 1 ? 0.45 : -0.45;
+      const behind = narrow ? (m.kind === 'tandem' ? 0.9 : 0.55) : i >= 2 ? 0.9 : 0;
       const eye = VEHICLE_EYE[m.kind] ?? 1;
       this.player.position.x = m.position.x + rx * side - fx * behind;
       this.player.position.z = m.position.z + rz * side - fz * behind;
@@ -4339,7 +4394,7 @@ export class Game {
       const near = this.nearestPlayer(m.position);
       // Un engin et une bête attachée appartiennent au joueur : ils ne
       // s'évaporent pas parce qu'il s'est éloigné. Le reste, si.
-      const permanent = m.def.machine === true || m.leashed || m.leashPost !== null;
+      const permanent = m.def.machine === true || m.leashed || m.leashPost !== null || m.tamed;
       if (m.dead || (near.dist > 110 && !m.def.orbit && !permanent)) {
         // Morte autrement que sous les coups du joueur — noyée, brûlée, tombée
         // dans le vide — la bête laisse quand même son butin.
@@ -4356,7 +4411,7 @@ export class Game {
       m.group.visible = dist < maxDist;
       if (near.dist > maxDist * 1.4) continue;
       // Une bête en laisse suit celui qui la tient : nous.
-      const target = m.leashed ? { pos: this.player.position, remote: 0 } : near;
+      const target = m.leashed || m.tamed ? { pos: this.player.position, remote: 0 } : near;
       m.update(
         dt, this.world, target.pos,
         target.remote === 0 ? this.player.mode === GameMode.Survival : this.save?.meta.mode !== GameMode.Creative,
@@ -4420,7 +4475,7 @@ export class Game {
    */
   private assignGuardTargets(): void {
     for (const g of this.mobs) {
-      if (!g.def.guard) continue;
+      if (!g.def.guard && !(g.tamed && g.kind === 'dog')) continue;
       let best: Mob | null = null;
       let bestD = g.def.aggroRange;
       for (const m of this.mobs) {
@@ -4450,7 +4505,7 @@ export class Game {
       ? night && Math.random() < 0.12
         ? ['enderman'] // l'enderman ne sort que la nuit, et rarement
         : ['zombie', 'skeleton', 'creeper', 'spider', 'bloop']
-      : ['pig', 'cow', 'sheep', 'chicken', 'horse'];
+      : ['pig', 'cow', 'sheep', 'chicken', 'horse', 'pig', 'cow', 'sheep', 'dog', 'cat'];
     const kind = kinds[Math.floor(Math.random() * kinds.length)];
     const def = MOBS[kind];
     const spot = findSpawnSpot(
@@ -4640,6 +4695,8 @@ export class Game {
         // Seule la laisse nouée se garde : « tenue en main » n'a plus de sens
         // une fois la partie fermée.
         post: m.leashPost ? [m.leashPost.x, m.leashPost.y, m.leashPost.z] : undefined,
+        tamed: m.tamed || undefined,
+        sitting: m.sitting || undefined,
       });
     }
     return out;
@@ -4655,6 +4712,8 @@ export class Game {
       if (e.shorn) m.shorn = true;
       if (e.airspeed !== undefined) m.airspeed = e.airspeed;
       if (e.post) m.leashPost = { x: e.post[0], y: e.post[1], z: e.post[2] };
+      if (e.tamed) m.tamed = true;
+      if (e.sitting) m.sitting = true;
     }
   }
 

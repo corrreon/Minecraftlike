@@ -84,9 +84,19 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   tout seul (Z/Q/S/D pour se déplacer, le regard pour tourner, saut pour
   monter, accroupi pour descendre et se poser) et un **Airbus**, lent mais
   majestueux, avec huit places.
+- **Bateaux** : une **barque** et un **hors-bord**, qui flottent et filent sur
+  l'eau mais se traînent sur la terre ferme. On les pose sur un plan d'eau.
+- **Deux-roues et compagnie** : **moto**, **vélo**, **tandem** (deux places),
+  **trottinette** et **quad** tout-terrain. Ils se conduisent comme les
+  voitures ; vélo, tandem et trottinette ont une sonnette au lieu d'un klaxon.
+- **Chiens et chats** : on les croise dans la nature. Un **os** apprivoise un
+  chien, du **poulet cru** un chat (une chance sur trois par friandise, à
+  coup sûr en créatif). Apprivoisé, l'animal porte un collier, suit son maître
+  et le rejoint s'il s'éloigne ; clic droit pour le faire s'asseoir ou se
+  relever. Le chien défend son maître contre les monstres.
 - **Passagers** : quand quelqu'un pilote, clic droit sur l'engin pour monter à
-  bord comme passager (Airbus, hélicoptère, avion, Tesla, Porsche,
-  Lamborghini). Accroupi pour descendre.
+  bord comme passager (Airbus, hélicoptère, avion, bateaux, voitures, moto,
+  tandem, quad). Accroupi pour descendre.
 - **Zombie mutant** : un colosse de trois blocs à **100 points de vie**, qui
   frappe fort et projette loin. Il naît d'un **œuf d'apparition** (huit chairs
   putréfiées autour d'un diamant), et une barre de vie s'affiche à son approche.
