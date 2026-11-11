@@ -49,6 +49,21 @@ jobs:
           fi
           npm ci
           npx tsc --noEmit
+
+          # Un compte neuf n'a pas encore d'adresse *.workers.dev : on la crée
+          # par l'API, sans passer par le tableau de bord.
+          api="https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/workers/subdomain"
+          auth="Authorization: Bearer $CLOUDFLARE_API_TOKEN"
+          current=$(curl -sS -H "$auth" "$api" | jq -r '.result.subdomain // empty')
+          if [ -z "$current" ]; then
+            for name in voxelcraft-corrreon "voxelcraft-$(date +%s | tail -c 6)"; do
+              res=$(curl -sS -X PUT -H "$auth" -H 'Content-Type: application/json' --data "{\"subdomain\":\"$name\"}" "$api")
+              if [ "$(echo "$res" | jq -r '.success')" = "true" ]; then current=$name; break; fi
+              echo "Sous-domaine $name refusé : $(echo "$res" | jq -c '.errors')"
+            done
+          fi
+          echo "Sous-domaine workers.dev : ${current:-aucun}"
+
           npx wrangler deploy 2>&1 | tee deploy.log
           url=$(grep -oE 'https://[A-Za-z0-9.-]+\.workers\.dev' deploy.log | head -1)
           echo "Serveur de parties : ${url:-adresse introuvable}"
