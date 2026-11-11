@@ -24,6 +24,7 @@ import { B, IS_SOLID, RENDER_KIND, RenderKind } from '../world/blocks';
 import type { World } from '../world/World';
 import { moveBox, type Box } from '../player/physics';
 import { mulberry32 } from '../world/noise';
+import type { Snap } from '../net/Multiplayer';
 
 export type MobKind =
   | 'pig' | 'cow' | 'sheep' | 'chicken' | 'horse'
@@ -644,6 +645,26 @@ export class Mob {
   turretYaw = 0;
   /** Distance parcourue par les roues, pour les faire tourner. */
   private wheelTurn = 0;
+  /** Identifiant partagé en multijoueur (vide en solo). */
+  uid = '';
+  /**
+   * Copie d'une créature qu'un autre joueur fait vivre : elle ne pense ni ne
+   * bouge d'elle-même, elle glisse vers le dernier état reçu.
+   */
+  puppet = false;
+  /** Joueur qui la fait vivre (multijoueur), et dimension où elle est. */
+  ownerId = 0;
+  dimension = 'overworld';
+  /** Dernier état envoyé, pour ne publier que ce qui change. */
+  lastSnapKey = '';
+  lastSnapAge = 0;
+  /** Sa disparition a déjà été annoncée (ou ne doit pas l'être). */
+  goneSent = false;
+  private target = new Vector3();
+  private targetYaw = 0;
+  private targetPitch = 0;
+  private targetRoll = 0;
+  private targetTurret = 0;
   /** Assiette et inclinaison du modèle, pour le rendu. */
   private pitch = 0;
   private roll = 0;
@@ -1247,6 +1268,92 @@ export class Mob {
   dispose(): void {
     for (const p of this.parts) p.mesh.geometry.dispose();
     this.material.dispose();
+  }
+
+  // --- Multijoueur -------------------------------------------------------------
+
+  /** État à publier pour les autres joueurs. */
+  snapshot(): Snap {
+    const f = (this.burning > 0 ? 1 : 0) | (this.shorn ? 2 : 0) | (this.ridden ? 4 : 0)
+      | (this.hurtFlash > 0.5 ? 8 : 0) | (this.fuse >= 0 ? 16 : 0);
+    const r2 = (v: number) => Math.round(v * 100) / 100;
+    const s: Snap = {
+      u: this.uid, k: this.kind, d: this.dimension,
+      x: r2(this.position.x), y: r2(this.position.y), z: r2(this.position.z),
+      yw: r2(this.yaw), h: Math.round(this.health * 10) / 10, f,
+    };
+    if (this.def.machine) s.a = r2(this.airspeed);
+    if (this.def.vehicle?.cannon) s.ty = r2(this.turretYaw);
+    if (this.def.aircraft) { s.p = r2(this.pitch); s.r = r2(this.roll); }
+    if (this.leashPost) s.lp = [this.leashPost.x, this.leashPost.y, this.leashPost.z];
+    return s;
+  }
+
+  /** Reçoit l'état publié par le propriétaire. `snap` : saute directement dessus. */
+  applySnapshot(s: Snap, snap = false): void {
+    this.target.set(s.x, s.y, s.z);
+    this.targetYaw = s.yw ?? this.targetYaw;
+    if (s.h !== undefined) {
+      if (s.h < this.health - 0.01) this.hurtFlash = 1;
+      this.health = s.h;
+    }
+    const f = s.f ?? 0;
+    this.burning = f & 1 ? 1 : 0;
+    this.shorn = (f & 2) !== 0;
+    this.ridden = (f & 4) !== 0;
+    if (f & 8) this.hurtFlash = Math.max(this.hurtFlash, 0.8);
+    this.fuse = f & 16 ? Math.max(0, this.fuse) : -1;
+    if (s.a !== undefined) this.airspeed = s.a;
+    if (s.ty !== undefined) this.targetTurret = s.ty;
+    if (s.p !== undefined) this.targetPitch = s.p;
+    if (s.r !== undefined) this.targetRoll = s.r;
+    this.leashPost = s.lp ? { x: s.lp[0], y: s.lp[1], z: s.lp[2] } : null;
+    if (snap) {
+      this.position.copy(this.target);
+      this.yaw = this.targetYaw;
+      this.turretYaw = this.targetTurret;
+      this.pitch = this.targetPitch;
+      this.roll = this.targetRoll;
+      this.velocity.set(0, 0, 0);
+    }
+  }
+
+  /** Copie : glisse vers l'état reçu, s'anime, s'éclaire. */
+  updatePuppet(dt: number, world: World, dayFactor: number): void {
+    this.age += dt;
+    if (this.hurtFlash > 0) this.hurtFlash = Math.max(0, this.hurtFlash - dt * 3);
+    if (this.fuse >= 0) this.fuse += dt;
+    const k = Math.min(1, 10 * dt);
+    const before = this.position.clone();
+    // Trop loin (téléportation, rattrapage) : on saute plutôt que de glisser.
+    if (this.position.distanceToSquared(this.target) > 400) this.position.copy(this.target);
+    else this.position.lerp(this.target, k);
+    this.yaw = wrapAngle(this.yaw + wrapAngle(this.targetYaw - this.yaw) * k);
+    this.turretYaw = wrapAngle(this.turretYaw + wrapAngle(this.targetTurret - this.turretYaw) * k);
+    this.pitch += (this.targetPitch - this.pitch) * k;
+    this.roll += (this.targetRoll - this.roll) * k;
+    const planar = Math.hypot(this.position.x - before.x, this.position.z - before.z) / Math.max(dt, 1e-3);
+    this.velocity.set((this.position.x - before.x) / Math.max(dt, 1e-3), (this.position.y - before.y) / Math.max(dt, 1e-3), (this.position.z - before.z) / Math.max(dt, 1e-3));
+    this.onGround = Math.abs(this.velocity.y) < 0.5;
+
+    this.group.position.copy(this.position);
+    if (this.def.aircraft) {
+      this.group.rotation.order = 'YXZ';
+      this.group.rotation.set(-this.pitch, this.yaw, this.roll);
+      this.walkPhase += dt * (2 + this.airspeed);
+    } else {
+      this.group.rotation.set(0, this.yaw + Math.PI, 0);
+      this.walkPhase += dt * (2.5 + planar * 2.6);
+    }
+    if (this.def.vehicle) this.wheelTurn += planar * dt * Math.sign(this.airspeed || 1) / 0.25;
+    this.animate(this.def.machine ? Math.abs(this.airspeed) : planar);
+
+    const l = world.getLight(Math.floor(this.position.x), Math.floor(this.position.y + 1), Math.floor(this.position.z));
+    voxelLightColor(l >> 4, l & 15, dayFactor, lightColor);
+    (this.material.uniforms.uLight.value as Color).copy(lightColor);
+    const flashing = this.kind === 'creeper' && this.fuse >= 0 ? (Math.sin(this.fuse * 26) * 0.5 + 0.5) * 0.9 : 0;
+    const flammes = this.burning > 0 ? 0.45 + Math.sin(this.age * 18) * 0.2 : 0;
+    this.material.uniforms.uFlash.value = Math.max(this.hurtFlash, flashing, flammes);
   }
 }
 

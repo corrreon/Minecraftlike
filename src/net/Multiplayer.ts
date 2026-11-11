@@ -9,7 +9,7 @@
 /** Adresse du serveur, fixée à la construction du site (voir le déploiement). */
 export const MULTI_URL: string = (import.meta.env.VITE_MP_URL as string | undefined) ?? '';
 
-export const PROTOCOL = 1;
+export const PROTOCOL = 2;
 
 export type Edit = [number, number, number, number];
 
@@ -19,7 +19,41 @@ export interface RemotePlayerInfo {
   x: number;
   y: number;
   z: number;
+  d?: string;
 }
+
+/**
+ * État publié d'une créature ou d'un engin. Noms courts : il en part
+ * plusieurs dizaines par seconde.
+ */
+export interface Snap {
+  /** Identifiant unique, stable d'un joueur à l'autre. */
+  u: string;
+  /** Espèce. */
+  k: string;
+  /** Dimension. */
+  d: string;
+  x: number;
+  y: number;
+  z: number;
+  yw?: number;
+  /** Points de vie. */
+  h?: number;
+  /** Drapeaux : 1 en feu, 2 tondu, 4 monté, 8 vient d'être blessé, 16 mèche allumée. */
+  f?: number;
+  /** Vitesse (engins). */
+  a?: number;
+  /** Tourelle, assiette, inclinaison. */
+  ty?: number;
+  p?: number;
+  r?: number;
+  /** Piquet de laisse. */
+  lp?: [number, number, number];
+  /** Propriétaire (rempli par le serveur). */
+  o?: number;
+}
+
+export type Slot = [number, number, number] | null;
 
 export interface Welcome {
   you: number;
@@ -31,12 +65,24 @@ export interface Welcome {
   host: string;
   players: RemotePlayerInfo[];
   edits: number;
+  flags?: { dragonSlain?: boolean };
 }
 
 export interface NetHandlers {
   onWelcome(w: Welcome): void;
   onOwnerToken(token: string): void;
-  onBlocks(edits: Edit[]): void;
+  onBlocks(edits: Edit[], dimension: string): void;
+  /** États publiés par d'autres (`owner` : qui les fait vivre). */
+  onEnts(owner: number, snaps: Snap[]): void;
+  /** Créatures qui nous sont confiées. */
+  onOwn(snaps: Snap[]): void;
+  /** Créature qui nous est reprise (un autre la monte, la tient en laisse…). */
+  onRelease(uid: string): void;
+  onGone(uid: string, killer: number, drops: [number, number][], xp: number): void;
+  onHit(uid: string, by: number, dmg: number, kx: number, kz: number, kind: 'hit' | 'fold' | 'shear'): void;
+  onHurt(dmg: number): void;
+  onChest(dimension: string, x: number, y: number, z: number, slots: Slot[]): void;
+  onFlag(key: string): void;
   onReady(): void;
   onJoin(id: number, name: string): void;
   onLeave(id: number): void;
@@ -81,6 +127,7 @@ export class NetSession {
   readonly room: string;
   private ws: WebSocket | null = null;
   private pendingEdits: Edit[] = [];
+  private pendingDim = 'overworld';
   private closedByUs = false;
   connected = false;
 
@@ -115,7 +162,25 @@ export class NetSession {
     switch (m.t) {
       case 'welcome': h.onWelcome(m as unknown as Welcome); break;
       case 'owner': h.onOwnerToken(String(m.token)); break;
-      case 'blocks': if (Array.isArray(m.e)) h.onBlocks(m.e as Edit[]); break;
+      case 'blocks': if (Array.isArray(m.e)) h.onBlocks(m.e as Edit[], String(m.d ?? 'overworld')); break;
+      case 'ent': {
+        if (!Array.isArray(m.s)) break;
+        const snaps = m.s as Snap[];
+        // Lot de bienvenue : chaque état porte son propriétaire.
+        if (m.o === undefined) {
+          for (const sn of snaps) h.onEnts(Number(sn.o ?? 0), [sn]);
+        } else {
+          h.onEnts(Number(m.o), snaps);
+        }
+        break;
+      }
+      case 'own': if (Array.isArray(m.s)) h.onOwn(m.s as Snap[]); break;
+      case 'release': h.onRelease(String(m.u)); break;
+      case 'gone': h.onGone(String(m.u), Number(m.killer ?? 0), Array.isArray(m.drops) ? (m.drops as [number, number][]) : [], Number(m.xp ?? 0)); break;
+      case 'hit': h.onHit(String(m.u), Number(m.by), Number(m.dmg), Number(m.kx), Number(m.kz), (m.kind as 'hit' | 'fold' | 'shear') ?? 'hit'); break;
+      case 'hurt': h.onHurt(Number(m.dmg)); break;
+      case 'chest': if (Array.isArray(m.slots)) h.onChest(String(m.d), Number(m.x), Number(m.y), Number(m.z), m.slots as Slot[]); break;
+      case 'flag': h.onFlag(String(m.k)); break;
       case 'ready': h.onReady(); break;
       case 'join': h.onJoin(Number(m.id), String(m.name)); break;
       case 'leave': h.onLeave(Number(m.id)); break;
@@ -135,20 +200,50 @@ export class NetSession {
     this.send({ t: 'pos', x: round2(x), y: round2(y), z: round2(z), yaw: round2(yaw), pitch: round2(pitch), d: dimension });
   }
 
-  queueEdit(x: number, y: number, z: number, id: number): void {
+  queueEdit(x: number, y: number, z: number, id: number, dimension: string): void {
+    // Un lot ne mélange pas les dimensions : on vide avant d'en changer.
+    if (this.pendingDim !== dimension) { this.flush(); this.pendingDim = dimension; }
     this.pendingEdits.push([x, y, z, id]);
   }
 
   /** Envoie les blocs modifiés depuis le dernier appel, en un seul message. */
   flush(): void {
     while (this.pendingEdits.length > 0) {
-      this.send({ t: 'blocks', e: this.pendingEdits.splice(0, 200) });
+      this.send({ t: 'blocks', d: this.pendingDim, e: this.pendingEdits.splice(0, 200) });
     }
   }
 
   /** Téléverse le monde de l'hôte, par lots, à la création de la partie. */
-  upload(edits: Edit[]): void {
-    for (let i = 0; i < edits.length; i += 4000) this.send({ t: 'upload', e: edits.slice(i, i + 4000) });
+  upload(edits: Edit[], dimension: string): void {
+    for (let i = 0; i < edits.length; i += 4000) this.send({ t: 'upload', d: dimension, e: edits.slice(i, i + 4000) });
+  }
+
+  sendEnts(snaps: Snap[]): void {
+    for (let i = 0; i < snaps.length; i += 120) this.send({ t: 'ent', s: snaps.slice(i, i + 120) });
+  }
+
+  gone(uid: string, killer = 0, drops: [number, number][] = [], xp = 0): void {
+    this.send({ t: 'gone', u: uid, killer, drops, xp });
+  }
+
+  hit(uid: string, dmg: number, kx: number, kz: number, kind: 'hit' | 'fold' | 'shear' = 'hit'): void {
+    this.send({ t: 'hit', u: uid, dmg, kx: round2(kx), kz: round2(kz), kind });
+  }
+
+  claim(uid: string): void {
+    this.send({ t: 'claim', u: uid });
+  }
+
+  hurt(playerId: number, dmg: number): void {
+    this.send({ t: 'hurt', to: playerId, dmg });
+  }
+
+  chest(dimension: string, x: number, y: number, z: number, slots: Slot[]): void {
+    this.send({ t: 'chest', d: dimension, x, y, z, slots });
+  }
+
+  flag(key: string): void {
+    this.send({ t: 'flag', k: key });
   }
 
   chat(text: string): void {

@@ -43,7 +43,7 @@ import { AudioEngine, type SoundGroup } from '../audio/Audio';
 import { Mob, ItemEntity, MOBS, coloredBox, findSpawnSpot, findWaterSpawnSpot, itemColor, type MobKind } from '../entities/Entities';
 import { Container, HOTBAR_SIZE, makeStack, type ItemStack } from '../items/Inventory';
 import { Inventory } from '../items/Inventory';
-import { ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, VEHICLE_ITEMS, blockDrops, breakInfo, type GunStats, type ItemDef } from '../items/items';
+import { ITEMS, ITEM_BY_KEY, ITEM_OF_BLOCK, SMELTING, VEHICLE_ITEMS, blockDrops, breakInfo, type GunStats, type ItemDef } from '../items/items';
 import { ONEBLOCK_PHASES, phaseFor, pickOneblock, rollLoot } from '../items/loot';
 import { GameMode, Player } from '../player/Player';
 import { raycast, type RaycastHit } from '../player/physics';
@@ -67,7 +67,7 @@ import { Hud, type TouchHandlers } from '../ui/Hud';
 import { Screens, type FurnaceState, type MultiInfo } from '../ui/Screens';
 import { buildIcons } from '../ui/icons';
 import { mulberry32 } from '../world/noise';
-import { MULTI_URL, NetSession, inviteLink, newRoomCode, parseRoomCode, type Edit, type HelloOptions, type Welcome } from '../net/Multiplayer';
+import { MULTI_URL, NetSession, inviteLink, newRoomCode, parseRoomCode, type Edit, type HelloOptions, type Slot, type Snap, type Welcome } from '../net/Multiplayer';
 
 /** Avatar d'un autre joueur de la partie. */
 interface RemoteAvatar {
@@ -82,6 +82,16 @@ interface RemoteAvatar {
 }
 
 const PSEUDO_KEY = 'voxelcraft-pseudo';
+
+/** Identifiant de créature partagé entre joueurs : 10 caractères aléatoires. */
+function newUid(): string {
+  const a = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+  const b = new Uint8Array(10);
+  crypto.getRandomValues(b);
+  let out = '';
+  for (const v of b) out += a[v % a.length];
+  return out;
+}
 
 const MOB_TICK = 1.8;
 /** Vitesse de décrochage d'un avion, dupliquée ici pour l'affichage. */
@@ -166,7 +176,12 @@ export class Game {
   /** Le monde local est prêt à recevoir les blocs du serveur. */
   private netWorldReady = false;
   /** Blocs reçus avant que le monde local soit prêt. */
-  private netQueue: Edit[] = [];
+  private netQueue: { d: string; e: Edit[] }[] = [];
+  /** Notre identifiant dans la partie (attribué par le serveur). */
+  private myNetId = 0;
+  /** Créature demandée au serveur avant de la monter ou de la tenir en laisse. */
+  private pendingClaim: { uid: string; action: 'mount' | 'leash'; at: number } | null = null;
+  private entSendTimer = 0;
   private applyingRemote = false;
   private remotes = new Map<number, RemoteAvatar>();
   private netPosTimer = 0;
@@ -966,6 +981,14 @@ export class Game {
 
   private closeScreen(): void {
     if (this.screens.isGameOverlay) this.screens.returnHeldAndCrafting();
+    // Coffre partagé : son contenu part chez les autres en le refermant.
+    if (this.openBlockPos && this.netActive) {
+      const be = this.blockEntities.get(this.openBlockPos);
+      if (be instanceof Container) {
+        const [x, y, z] = this.openBlockPos.split(',').map(Number);
+        this.net!.chest(this.dimension, x, y, z, be.serialize());
+      }
+    }
     this.screens.show('none');
     this.openBlockPos = null;
     this.paused = false;
@@ -1924,6 +1947,7 @@ export class Game {
         }
       }
       this.blockEntities.delete(bkey);
+      if (be instanceof Container && this.netActive) this.net!.chest(this.dimension, hit.x, hit.y, hit.z, []);
     }
     // Le bloc unique repousse aussitôt : c'est tout le principe du mode.
     if (this.worldType === 'oneblock' && hit.x === ONEBLOCK_X && hit.y === ONEBLOCK_Y && hit.z === ONEBLOCK_Z) {
@@ -2097,7 +2121,12 @@ export class Game {
       const eye = this.player.eyePosition.clone();
       const dir = this.player.forward.clone().normalize();
       const aimed = this.pickMob(eye, dir, REACH_SURVIVAL);
-      if (aimed?.def.rideable) { this.useLocked = true; this.mountMob(aimed); return; }
+      if (aimed?.def.rideable) {
+        this.useLocked = true;
+        if (aimed.puppet) this.claimMob(aimed, 'mount');
+        else this.mountMob(aimed);
+        return;
+      }
     }
 
     // Interaction avec un bloc « conteneur ».
@@ -2159,6 +2188,12 @@ export class Game {
       const eye = this.player.eyePosition.clone();
       const dir = this.player.forward.clone().normalize();
       const cible = this.pickMob(eye, dir, REACH_SURVIVAL);
+      if (cible && !cible.def.hostile && !cible.def.machine && cible.puppet) {
+        this.claimMob(cible, 'leash');
+        this.audio.click();
+        this.heldView.swing = 1;
+        return;
+      }
       if (cible && !cible.def.hostile && !cible.def.machine) {
         if (cible.leashed || cible.leashPost) {
           cible.leashed = false;
@@ -2617,7 +2652,30 @@ export class Game {
       onOwnerToken: (token) => {
         if (this.save && role === 'host') { this.save.meta.mpOwner = token; void this.save.createOrUpdateMeta(); }
       },
-      onBlocks: (edits) => this.applyRemoteEdits(edits),
+      onBlocks: (edits, d) => this.applyRemoteEdits(edits, d),
+      onEnts: (owner, snaps) => this.onNetEnts(owner, snaps),
+      onOwn: (snaps) => this.onNetOwn(snaps),
+      onRelease: (uid) => {
+        const m = this.mobByUid(uid);
+        if (!m || m.puppet) return;
+        if (m === this.mount) this.dismount();
+        m.leashed = false;
+        m.puppet = true;
+      },
+      onGone: (uid, killer, drops, xp) => this.onNetGone(uid, killer, drops, xp),
+      onHit: (uid, by, dmg, kx, kz, kind) => this.onNetHit(uid, by, dmg, kx, kz, kind),
+      onHurt: (dmg) => {
+        if (this.player.mode !== GameMode.Survival || this.player.dead) return;
+        this.player.damage(dmg, false, this.inventory.totalDefense());
+        this.inventory.damageArmor(1);
+        this.audio.hurt();
+      },
+      onChest: (d, x, y, z, slots) => this.onNetChest(d, x, y, z, slots),
+      onFlag: (k) => {
+        if (k !== 'dragonSlain' || !this.save) return;
+        this.save.meta.dragonSlain = true;
+        this.hud.toast('Le dragon de l’End a été vaincu !', 'info', 5000);
+      },
       onReady: () => { if (role === 'guest') this.hud.toast('Monde synchronisé avec la partie.'); },
       onJoin: (id, name) => {
         this.addRemote(id, name);
@@ -2664,6 +2722,10 @@ export class Game {
     this.netWelcomed = true;
     this.netRetries = 0;
     this.lastSentPos = '';
+    this.myNetId = w.you;
+    if (w.flags?.dragonSlain && this.save) this.save.meta.dragonSlain = true;
+    // Nos créatures prennent un identifiant partagé et partent chez les autres.
+    for (const m of this.mobs) { if (!m.uid) m.uid = newUid(); m.dimension = this.dimension; m.ownerId = w.you; m.lastSnapKey = ''; }
     for (const p of w.players) {
       const r = this.addRemote(p.id, p.name);
       r.target.set(p.x, p.y, p.z);
@@ -2679,7 +2741,12 @@ export class Game {
         this.openMultiplayer(hello.name, hello.pass);
         return;
       }
-      if (w.created && this.save) session.upload(this.save.overworldEdits());
+      if (w.created && this.save) {
+        for (const d of ['overworld', 'nether', 'end'] as const) {
+          const edits = this.save.editsOf(d);
+          if (edits.length) session.upload(edits, d);
+        }
+      }
       const link = inviteLink(session.room);
       void navigator.clipboard?.writeText(link).catch(() => undefined);
       this.hud.toast(w.created ? 'Partie ouverte ! Lien d’invitation copié.' : 'Reconnecté à ta partie.', 'info', 5000);
@@ -2711,22 +2778,193 @@ export class Game {
     this.netJoinPending = true;
     const queued = this.netQueue;
     this.netQueue = [];
-    this.applyRemoteEdits(queued);
+    for (const q of queued) this.applyRemoteEdits(q.e, q.d);
     this.hud.toast(`Bienvenue dans la partie de ${w.host} !`);
   }
 
   /** Blocs modifiés par les autres : appliqués sans être renvoyés. */
-  private applyRemoteEdits(edits: Edit[]): void {
-    if (!this.netWorldReady || !this.save) { for (const e of edits) this.netQueue.push(e); return; }
+  private applyRemoteEdits(edits: Edit[], d: string): void {
+    const dim = (d === 'nether' || d === 'end' ? d : 'overworld') as Dimension;
+    if (!this.netWorldReady || !this.save) { this.netQueue.push({ d: dim, e: edits }); return; }
     this.applyingRemote = true;
     for (const [x, y, z, id] of edits) {
       if (y < 0 || y >= WORLD_HEIGHT || id < 0 || id >= BLOCKS.length) continue;
       const cx = floorDiv(x, CHUNK_X), cz = floorDiv(z, CHUNK_Z);
-      if (this.dimension === 'overworld') this.world.setBlock(x, y, z, id);
+      if (this.dimension === dim) this.world.setBlock(x, y, z, id);
       // Enregistré même si le chunk n'est pas chargé : il sera appliqué à sa génération.
-      this.save.recordOverworldEdit(cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
+      this.save.recordEditIn(dim, cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
     }
     this.applyingRemote = false;
+  }
+
+  // --- Créatures partagées -------------------------------------------------------
+
+  private get netActive(): boolean {
+    return this.net !== null && this.netWelcomed;
+  }
+
+  private mobByUid(uid: string): Mob | null {
+    if (!uid) return null;
+    for (const m of this.mobs) if (m.uid === uid && !m.dead) return m;
+    return null;
+  }
+
+  /** Copie d'une créature d'un autre joueur, ou mise à jour de la copie. */
+  private onNetEnts(owner: number, snaps: Snap[]): void {
+    if (!this.worldReady) return;
+    for (const sn of snaps) {
+      let m = this.mobByUid(sn.u);
+      if (sn.d !== this.dimension) {
+        // Partie ailleurs : la copie d'ici n'a plus lieu d'être.
+        if (m?.puppet) { m.dead = true; m.lootDropped = true; m.goneSent = true; }
+        continue;
+      }
+      if (!(sn.k in MOBS)) continue;
+      if (!m) {
+        m = this.addMob(sn.k as MobKind, sn.x, sn.y, sn.z);
+        m.uid = sn.u;
+        m.puppet = true;
+        m.applySnapshot(sn, true);
+        if (m.kind === 'ender_dragon') this.dragon = m;
+      } else if (owner !== this.myNetId) {
+        // Un autre la fait vivre désormais : on suit son état.
+        if (!m.puppet && m === this.mount) this.dismount();
+        m.puppet = true;
+      }
+      m.ownerId = owner;
+      m.applySnapshot(sn);
+    }
+  }
+
+  /** Créatures confiées par le serveur : on les fait vivre à partir de leur état. */
+  private onNetOwn(snaps: Snap[]): void {
+    if (!this.worldReady) return;
+    for (const sn of snaps) {
+      if (sn.d !== this.dimension || !(sn.k in MOBS)) continue;
+      let m = this.mobByUid(sn.u);
+      if (!m) {
+        m = this.addMob(sn.k as MobKind, sn.x, sn.y, sn.z);
+        m.uid = sn.u;
+      }
+      m.applySnapshot(sn, true);
+      m.puppet = false;
+      m.ownerId = this.myNetId;
+      m.lastSnapKey = '';
+      if (m.kind === 'ender_dragon') this.dragon = m;
+      // Créature demandée pour la monter ou l'attacher : on y va.
+      const c = this.pendingClaim;
+      if (c && c.uid === sn.u) {
+        this.pendingClaim = null;
+        if (c.action === 'mount' && m.def.rideable && !this.mount) this.mountMob(m);
+        else if (c.action === 'leash') { m.leashed = true; m.leashPost = null; this.hud.toast('Au bout de la laisse.'); }
+      }
+    }
+  }
+
+  private onNetGone(uid: string, killer: number, drops: [number, number][], xp: number): void {
+    const m = this.mobByUid(uid);
+    const at = m ? m.position.clone() : this.player.position.clone();
+    if (m) {
+      if (m === this.mount) this.dismount();
+      m.dead = true;
+      m.lootDropped = true;
+      m.goneSent = true;
+    }
+    // C'est nous qui l'avons abattue : le butin tombe chez nous.
+    if (killer !== 0 && killer === this.myNetId) {
+      for (const [id, count] of drops) {
+        const def = ITEMS[id];
+        if (def && count > 0) this.spawnDrop(at.x, at.y + 0.5, at.z, makeStack(def, Math.min(64, count)));
+      }
+      if (xp > 0) this.player.addXp(xp);
+    }
+  }
+
+  /** Coup porté par un autre joueur à une créature qu'on fait vivre. */
+  private onNetHit(uid: string, by: number, dmg: number, kx: number, kz: number, kind: 'hit' | 'fold' | 'shear'): void {
+    const m = this.mobByUid(uid);
+    if (!m || m.puppet) return;
+    if (kind === 'fold') {
+      if (!m.def.machine) return;
+      if (m === this.mount) this.dismount();
+      m.dead = true;
+      m.lootDropped = true;
+      m.goneSent = true;
+      const item = ITEM_BY_KEY.get(m.kind);
+      this.net?.gone(uid, by, item ? [[item.id, 1]] : [], 0);
+      return;
+    }
+    if (kind === 'shear') { if (m.kind === 'sheep') m.shorn = true; return; }
+    const killed = m.hurt(dmg);
+    this.audio.mobHurt(m.kind);
+    if (!m.def.orbit) {
+      m.velocity.x += kx * 5;
+      m.velocity.z += kz * 5;
+      m.velocity.y = Math.max(m.velocity.y, 3.4);
+    }
+    if (killed) {
+      m.lootDropped = true;
+      m.goneSent = true;
+      const drops = m.rollDrops()
+        .map((d) => [d.stack.item.id, d.stack.count] as [number, number]);
+      if (m === this.mount) this.dismount();
+      this.net?.gone(uid, by, drops, m.def.xp);
+      if (m.def.orbit) this.onDragonSlain(m);
+    }
+  }
+
+  /** Coffre modifié par un autre joueur. */
+  private onNetChest(d: string, x: number, y: number, z: number, slots: Slot[]): void {
+    const key = `${x},${y},${z}`;
+    const dim = (d === 'nether' || d === 'end' ? d : 'overworld') as Dimension;
+    const map = dim === this.dimension ? this.blockEntities : (this.dimEntities.get(dim) ?? new Map());
+    if (dim !== this.dimension) this.dimEntities.set(dim, map);
+    let c = map.get(key);
+    if (!(c instanceof Container)) { c = new Container(27); map.set(key, c); }
+    c.deserialize(slots.slice(0, c.size));
+    if (dim === this.dimension) this.lootedChests.add(key);
+    if (this.openBlockPos === key && dim === this.dimension) this.screens.refreshAll();
+  }
+
+  /** Publie l'état des créatures qu'on fait vivre (seulement ce qui change). */
+  private publishEnts(dt: number, force = false): void {
+    if (!this.net || !this.netActive) return;
+    this.entSendTimer -= dt;
+    if (this.entSendTimer > 0 && !force) return;
+    this.entSendTimer = 0.15;
+    const out: Snap[] = [];
+    for (const m of this.mobs) {
+      if (m.puppet || m.dead || !m.uid) continue;
+      m.dimension = this.dimension;
+      m.lastSnapAge += 0.15;
+      const s = m.snapshot();
+      const key = `${s.x},${s.y},${s.z},${s.yw},${s.h},${s.f},${s.a ?? ''},${s.ty ?? ''},${s.p ?? ''},${s.lp ?? ''}`;
+      if (!force && key === m.lastSnapKey && m.lastSnapAge < 3) continue;
+      m.lastSnapKey = key;
+      m.lastSnapAge = 0;
+      out.push(s);
+    }
+    if (out.length) this.net.sendEnts(out);
+  }
+
+  /** Joueur le plus proche d'un point : nous, ou un autre de la même dimension. */
+  private nearestPlayer(p: Vector3): { pos: Vector3; remote: number; dist: number } {
+    let best = { pos: this.player.position, remote: 0, dist: p.distanceTo(this.player.position) };
+    if (!this.netActive) return best;
+    for (const [id, r] of this.remotes) {
+      if (!r.seen || r.dimension !== this.dimension) continue;
+      const d = p.distanceTo(r.target);
+      if (d < best.dist) best = { pos: r.target, remote: id, dist: d };
+    }
+    return best;
+  }
+
+  /** Demande la créature d'un autre joueur au serveur avant d'agir dessus. */
+  private claimMob(m: Mob, action: 'mount' | 'leash'): void {
+    if (!this.net) return;
+    if (m.ridden) { this.hud.toast('Quelqu’un est déjà dessus.', 'warn'); return; }
+    this.pendingClaim = { uid: m.uid, action, at: this.elapsed };
+    this.net.claim(m.uid);
   }
 
   private onNetClosed(): void {
@@ -2741,6 +2979,7 @@ export class Game {
     }
     this.net = null;
     this.netWelcomed = false;
+    this.dropPuppets();
     for (const id of [...this.remotes.keys()]) this.removeRemote(id);
     if (!hello || !role || !room || this.netRetries >= 5) {
       this.hud.toast('Déconnecté de la partie.', 'warn');
@@ -2761,6 +3000,8 @@ export class Game {
   private leaveMultiplayer(announce: boolean): void {
     if (this.netRetryTimer !== null) { clearTimeout(this.netRetryTimer); this.netRetryTimer = null; }
     const was = this.net !== null;
+    // Dernier état de nos créatures avant de partir : un autre joueur les reprendra.
+    if (this.netActive) { this.publishEnts(0, true); this.net!.flush(); }
     this.net?.close();
     this.net = null;
     this.netRole = null;
@@ -2768,6 +3009,8 @@ export class Game {
     this.netWelcomed = false;
     this.netQueue = [];
     this.netRetries = 0;
+    this.pendingClaim = null;
+    this.dropPuppets();
     for (const id of [...this.remotes.keys()]) this.removeRemote(id);
     if (announce && was) this.hud.toast('Tu as quitté la partie : ton monde redevient solo.');
     if (announce && this.save) {
@@ -2776,6 +3019,12 @@ export class Game {
       if (!this.save.meta.mpGuest) this.save.meta.mpOwner = undefined;
       void this.save.createOrUpdateMeta();
     }
+  }
+
+  /** Les copies appartiennent aux autres : hors ligne, elles disparaissent. */
+  private dropPuppets(): void {
+    for (const m of this.mobs) if (m.puppet) { m.dead = true; m.lootDropped = true; m.goneSent = true; }
+    if (this.dragon?.puppet) this.dragon = null;
   }
 
   private addRemote(id: number, name: string): RemoteAvatar {
@@ -2858,6 +3107,11 @@ export class Game {
   /** Envoie sa position, et fait glisser les avatars des autres vers la leur. */
   private updateNet(dt: number): void {
     this.updatePlayersHud(dt);
+    this.publishEnts(dt);
+    if (this.pendingClaim && this.elapsed - this.pendingClaim.at > 3) {
+      this.pendingClaim = null;
+      this.hud.toast('Pas de réponse du serveur, réessaie.', 'warn');
+    }
     const net = this.net;
     if (net && this.netWelcomed) {
       net.flush();
@@ -3420,6 +3674,11 @@ export class Game {
     for (const c of this.world.chunks.values()) if (c.edits?.size) this.save.storeEdits(c.cx, c.cz, c.edits);
     await this.save.flush();
 
+    // En partie, le dernier état des créatures part avant qu'on les quitte :
+    // le serveur les confiera à un joueur resté sur place.
+    this.publishEnts(0, true);
+    this.net?.flush();
+
     // Les conteneurs restent attachés à leur dimension.
     this.dimEntities.set(from, new Map(this.blockEntities));
     this.teardownDimension();
@@ -3657,10 +3916,10 @@ export class Game {
     const cx = floorDiv(x, CHUNK_X);
     const cz = floorDiv(z, CHUNK_Z);
     this.save?.recordEdit(cx, cz, voxelIndex(mod(x, CHUNK_X), y, mod(z, CHUNK_Z)), id);
-    // Partie partagée : tout bloc posé ou cassé ici part chez les autres. Seul
-    // l'Overworld est commun ; Nether et End restent propres à chacun.
-    if (this.net && this.netWelcomed && !this.applyingRemote && this.dimension === 'overworld') {
-      this.net.queueEdit(x, y, z, id);
+    // Partie partagée : tout bloc posé ou cassé ici part chez les autres,
+    // dans les trois dimensions.
+    if (this.net && this.netWelcomed && !this.applyingRemote) {
+      this.net.queueEdit(x, y, z, id, this.dimension);
     }
   }
 
@@ -3719,6 +3978,14 @@ export class Game {
 
   /** Blessure infligée à distance (balle, choc de véhicule) : recul depuis `from`. */
   private damageMob(m: Mob, damage: number, from: Vector3, knock: number): void {
+    if (m.puppet && this.net) {
+      const dx = m.position.x - from.x, dz = m.position.z - from.z;
+      const len = Math.hypot(dx, dz) || 1;
+      this.net.hit(m.uid, damage, (dx / len) * knock / 5, (dz / len) * knock / 5);
+      m.hurtFlash = 1;
+      this.audio.mobHurt(m.kind);
+      return;
+    }
     const killed = m.hurt(damage);
     this.audio.mobHurt(m.kind);
     if (this.settings.particles) this.particles.puff(m.position.x, m.position.y + m.def.height * 0.6, m.position.z, 0xc03030, 4);
@@ -3739,6 +4006,29 @@ export class Game {
 
   private hitMob(m: Mob): void {
     const held = this.inventory.selectedStack;
+
+    // Créature d'un autre joueur : le coup lui est transmis, il l'applique.
+    if (m.puppet && this.net) {
+      const dx = m.position.x - this.player.position.x;
+      const dz = m.position.z - this.player.position.z;
+      const len = Math.hypot(dx, dz) || 1;
+      this.heldView.swing = 1;
+      if (m.def.machine) { this.net.hit(m.uid, 0, 0, 0, 'fold'); this.audio.break('metal'); return; }
+      if (held?.item.tool?.kind === 'shears' && m.kind === 'sheep' && !m.shorn) {
+        m.shorn = true;
+        this.net.hit(m.uid, 0, 0, 0, 'shear');
+        const laine = ITEM_BY_KEY.get('white_wool');
+        if (laine) this.spawnDrop(m.position.x, m.position.y + 0.6, m.position.z, makeStack(laine, 1 + Math.floor(this.rnd() * 3)));
+        if (this.player.mode !== GameMode.Creative) this.inventory.damageSelected(1);
+        return;
+      }
+      this.net.hit(m.uid, held?.item.tool?.damage ?? 1, dx / len, dz / len);
+      m.hurtFlash = 1;
+      this.audio.mobHurt(m.kind);
+      if (this.settings.particles) this.particles.puff(m.position.x, m.position.y + m.def.height * 0.6, m.position.z, 0xc03030, 4);
+      if (held?.item.durability) this.inventory.damageSelected(1);
+      return;
+    }
 
     // Frapper un avion le replie en objet : c'est la seule façon de le
     // déplacer, et ça évite d'en semer un peu partout.
@@ -3801,14 +4091,19 @@ export class Game {
   private updateDragonFight(dt: number): void {
     if (this.dimension !== 'end') { this.dragon = null; return; }
 
-    if (!this.dragon && !this.save?.meta.dragonSlain && this.mobsEnabled) {
+    // En partie, le dragon d'un autre joueur est déjà là : on suit le sien.
+    if (!this.dragon) {
+      const copie = this.mobs.find((m) => m.kind === 'ender_dragon' && !m.dead);
+      if (copie) this.dragon = copie;
+    }
+    // Un seul joueur fait naître le dragon : celui qui a le plus petit numéro dans l'End.
+    const premier = !this.netActive || ![...this.remotes.entries()].some(([id, r]) => r.dimension === 'end' && id < this.myNetId);
+    if (!this.dragon && !this.save?.meta.dragonSlain && this.mobsEnabled && premier) {
       this.dragonSpawnDelay -= dt;
       if (this.dragonSpawnDelay <= 0) {
         this.dragonSpawnDelay = 12;
         // On l'amène par le nord de l'île, en altitude.
-        this.dragon = new Mob('ender_dragon', 0.5, 96, -44.5, this.env, (Math.random() * 1e9) | 0);
-        this.mobs.push(this.dragon);
-        this.entityGroup.add(this.dragon.group);
+        this.dragon = this.addMob('ender_dragon', 0.5, 96, -44.5);
         this.hud.toast('Le dragon de l’End vous a vu.', 'warn', 5000);
         this.audio.mobAmbient('ender_dragon');
       }
@@ -3824,7 +4119,7 @@ export class Game {
       this.crystalTimer = 2.5;
       this.crystals = this.countCrystals();
     }
-    if (this.crystals > 0 && d.health < d.def.health) {
+    if (this.crystals > 0 && d.health < d.def.health && !d.puppet) {
       // Chaque cristal rend deux points par seconde.
       d.health = Math.min(d.def.health, d.health + this.crystals * 2 * dt);
       if (this.settings.particles && Math.random() < dt * 6) {
@@ -3865,6 +4160,7 @@ export class Game {
   /** Mort du dragon : explosion, œuf, portail de sortie, et c'est fini. */
   private onDragonSlain(m: Mob): void {
     this.dragon = null;
+    if (this.netActive) this.net!.flag('dragonSlain');
     this.hud.setBoss(null);
     if (this.save) this.save.meta.dragonSlain = true;
     this.audio.explosion();
@@ -3897,28 +4193,47 @@ export class Game {
     for (let i = this.mobs.length - 1; i >= 0; i--) {
       const m = this.mobs[i];
       const dist = m.position.distanceTo(this.player.position);
+      if (m.puppet) {
+        // Copie d'une créature d'un autre joueur : elle suit son état publié.
+        if (m.dead) {
+          if (m === this.dragon) this.dragon = null;
+          this.entityGroup.remove(m.group);
+          m.dispose();
+          this.mobs.splice(i, 1);
+          continue;
+        }
+        m.group.visible = dist < maxDist;
+        if (dist < maxDist * 1.4) m.updatePuppet(dt, this.world, dayFactor);
+        continue;
+      }
+      // En partie, la créature vit pour le joueur le plus proche, quel qu'il soit.
+      const near = this.nearestPlayer(m.position);
       // Un engin et une bête attachée appartiennent au joueur : ils ne
       // s'évaporent pas parce qu'il s'est éloigné. Le reste, si.
       const permanent = m.def.machine === true || m.leashed || m.leashPost !== null;
-      if (m.dead || (dist > 110 && !m.def.orbit && !permanent)) {
+      if (m.dead || (near.dist > 110 && !m.def.orbit && !permanent)) {
         // Morte autrement que sous les coups du joueur — noyée, brûlée, tombée
         // dans le vide — la bête laisse quand même son butin.
         if (m.dead && !m.lootDropped) {
           m.lootDropped = true;
           for (const d of m.rollDrops()) this.spawnDrop(d.x, d.y, d.z, d.stack);
         }
+        if (!m.goneSent && this.netActive && m.uid) { m.goneSent = true; this.net!.gone(m.uid); }
         this.entityGroup.remove(m.group);
         m.dispose();
         this.mobs.splice(i, 1);
         continue;
       }
       m.group.visible = dist < maxDist;
-      if (dist > maxDist * 1.4) continue;
+      if (near.dist > maxDist * 1.4) continue;
+      // Une bête en laisse suit celui qui la tient : nous.
+      const target = m.leashed ? { pos: this.player.position, remote: 0 } : near;
       m.update(
-        dt, this.world, this.player.position,
-        this.player.mode === GameMode.Survival,
+        dt, this.world, target.pos,
+        target.remote === 0 ? this.player.mode === GameMode.Survival : this.save?.meta.mode !== GameMode.Creative,
         dayFactor,
         (dmg) => {
+          if (target.remote !== 0) { this.net?.hurt(target.remote, dmg); return; }
           this.player.damage(dmg, false, this.inventory.totalDefense());
           this.inventory.damageArmor(1);
           this.audio.hurt();
@@ -4165,6 +4480,9 @@ export class Game {
 
   private addMob(kind: MobKind, x: number, y: number, z: number): Mob {
     const m = new Mob(kind, x, y, z, this.env, (Math.random() * 1e9) | 0);
+    m.uid = newUid();
+    m.dimension = this.dimension;
+    m.ownerId = this.myNetId;
     this.mobs.push(m);
     this.entityGroup.add(m.group);
     return m;
@@ -4181,7 +4499,8 @@ export class Game {
   private serializeEntities(): EntitySave[] {
     const out: EntitySave[] = [];
     for (const m of this.mobs) {
-      if (m.dead || m.kind === 'ender_dragon') continue;
+      // Les copies appartiennent aux autres joueurs : on ne les écrit pas.
+      if (m.dead || m.puppet || m.kind === 'ender_dragon') continue;
       out.push({
         kind: m.kind,
         x: +m.position.x.toFixed(2), y: +m.position.y.toFixed(2), z: +m.position.z.toFixed(2),
@@ -4213,6 +4532,8 @@ export class Game {
   /** Relit et recrée les entités écrites pour la dimension courante. */
   private async restoreDimensionEntities(): Promise<void> {
     if (!this.save) return;
+    // Monde partagé : les créatures viennent du serveur, pas de la copie locale.
+    if (this.save.meta.mpRoom) return;
     const dimension = this.dimension;
     const list = await this.save.loadEntities(dimension);
     // Le joueur a pu changer de dimension pendant la lecture.
@@ -4258,6 +4579,14 @@ export class Game {
             }
           }
         }
+      }
+    }
+    // Souffle sur les autres joueurs de la partie.
+    if (this.netActive) {
+      for (const [id, r] of this.remotes) {
+        if (!r.seen || r.dimension !== this.dimension) continue;
+        const dr = r.target.distanceTo(tmpVec.set(x, y, z));
+        if (dr < radius * 2.2) this.net!.hurt(id, Math.round(14 * (1 - dr / (radius * 2.2))));
       }
     }
     // Souffle sur le joueur.

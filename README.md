@@ -108,10 +108,19 @@ WebGL 2 est requis (tableau de textures, shaders GLSL 3).
   Les amis l'ouvrent (ou passent par *Rejoindre une partie* au menu), donnent
   un pseudo, et arrivent dans le même monde : même graine, mêmes
   constructions.
-- **Synchronisé** : blocs posés et cassés dans l'Overworld, positions et
-  avatars des joueurs (avec leur pseudo), arrivées et départs, discussion
-  (`/dire bonjour` dans la console). Créatures, coffres, Nether et End restent
-  propres à chaque joueur pour l'instant.
+- **Synchronisé** : blocs posés et cassés dans les trois dimensions (Overworld,
+  Nether, End), positions et avatars des joueurs avec leur pseudo, arrivées et
+  départs, discussion (`/dire bonjour` dans la console, `/tp <pseudo>` pour
+  rejoindre un ami), contenu des coffres, et victoire contre le dragon.
+- **Créatures et engins partagés** : chaque créature est « confiée » à un
+  joueur, dont le navigateur la fait vivre (IA, physique) ; les autres en
+  voient une copie qui suit ses mouvements. Frapper la bête d'un autre lui
+  transmet le coup, et le butin revient à celui qui l'abat. Monter un cheval,
+  prendre le volant d'une voiture ou tenir une bête en laisse fait passer
+  celle-ci au joueur concerné, pour qu'elle réponde sans délai. Les monstres
+  s'en prennent au joueur le plus proche, quel qu'il soit. Quand un joueur part
+  ou change de dimension, le serveur confie ses créatures à un autre, ou les
+  garde jusqu'au prochain venu.
 - **Le monde partagé vit sur le serveur** : il reste jouable quand l'hôte est
   déconnecté, et chacun le retrouve dans sa liste de mondes, qui se reconnecte
   toute seule à la partie.
@@ -385,7 +394,11 @@ Quelques points de conception :
 ## Limites connues
 
 - Les contenus de fours et de coffres vivent en mémoire pour la session : ils
-  ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont).
+  ne sont pas encore écrits dans IndexedDB (les blocs, eux, le sont). En
+  partie partagée, les coffres sont gardés par le serveur ; les fours restent
+  propres à chaque joueur.
+- En partie partagée, les objets tombés au sol restent chez le joueur qui les
+  a fait tomber.
 - Les objets tombés au sol ne sont pas sauvegardés : ce qui traîne encore à la
   fermeture est perdu. Ils s'effacent de toute façon au bout de cinq minutes.
 - La coulée d'eau n'a pas de niveaux : Minecraft en compte sept, ce qui donne

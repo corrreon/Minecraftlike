@@ -212,14 +212,15 @@ export class SaveManager {
   }
 
   /**
-   * Toutes les modifications de l'Overworld, en coordonnées du monde : c'est
+   * Toutes les modifications d'une dimension, en coordonnées du monde : c'est
    * ce que l'hôte téléverse en ouvrant une partie multijoueur.
    */
-  overworldEdits(): [number, number, number, number][] {
+  editsOf(dimension: Dimension): [number, number, number, number][] {
     const out: [number, number, number, number][] = [];
+    const prefix = dimension === 'overworld' ? '' : `${dimension}/`;
     for (const [key, map] of this.edits) {
-      if (key.includes('/')) continue; // Nether, End
-      const [cx, cz] = key.split(',').map(Number);
+      if (prefix ? !key.startsWith(prefix) : key.includes('/')) continue;
+      const [cx, cz] = key.slice(prefix.length).split(',').map(Number);
       for (const [index, block] of map) {
         const lx = index % CHUNK_X;
         const lz = Math.floor(index / CHUNK_X) % CHUNK_Z;
@@ -230,9 +231,10 @@ export class SaveManager {
     return out;
   }
 
-  /** Comme `recordEdit`, mais pour l'Overworld quelle que soit la dimension courante. */
-  recordOverworldEdit(cx: number, cz: number, index: number, block: number): void {
-    const key = chunkKey(cx, cz);
+  /** Comme `recordEdit`, mais pour une dimension donnée, quelle que soit la courante. */
+  recordEditIn(dimension: Dimension, cx: number, cz: number, index: number, block: number): void {
+    const k = chunkKey(cx, cz);
+    const key = dimension === 'overworld' ? k : `${dimension}/${k}`;
     let m = this.edits.get(key);
     if (!m) { m = new Map(); this.edits.set(key, m); }
     m.set(index, block);
