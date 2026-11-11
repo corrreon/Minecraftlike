@@ -58,6 +58,11 @@ jobs:
           current=$(curl -sS -H "$auth" "$api" | jq -r '.result.subdomain // empty')
           echo "Sous-domaine actuel : ${current:-aucun}"
           if [ "$current" != "corrreon" ] && [ "$current" != "voxelcraft-corrreon" ]; then
+            # L'API ne renomme pas : on supprime l'ancien avant de créer le bon.
+            if [ -n "$current" ]; then
+              del=$(curl -sS -X DELETE -H "$auth" "$api")
+              echo "Suppression de $current : $(echo "$del" | jq -c '{success, errors}')"
+            fi
             for name in corrreon voxelcraft-corrreon; do
               res=$(curl -sS -X PUT -H "$auth" -H 'Content-Type: application/json' --data "{\"subdomain\":\"$name\"}" "$api")
               if [ "$(echo "$res" | jq -r '.success')" = "true" ]; then current=$name; break; fi
